@@ -5,4 +5,3 @@ export default defineConfig({
   base: "/webcam-app/",
   plugins: [preact()],
 });
-

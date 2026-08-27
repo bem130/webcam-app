@@ -5,10 +5,19 @@ import { none, some } from "./result";
 
 export type AppAction =
   | Readonly<{ type: "cameraRequestStarted" }>
-  | Readonly<{ type: "cameraStarted"; current: CameraId | null; cameras: readonly CameraDescriptor[] }>
+  | Readonly<{
+      type: "cameraStarted";
+      current: CameraId | null;
+      cameras: readonly CameraDescriptor[];
+    }>
   | Readonly<{ type: "cameraFailed"; error: CameraError }>
   | Readonly<{ type: "cameraSwitchStarted"; target: CameraId }>
-  | Readonly<{ type: "cameraSwitched"; previous: CameraId | null; current: CameraId; cameras: readonly CameraDescriptor[] }>
+  | Readonly<{
+      type: "cameraSwitched";
+      previous: CameraId | null;
+      current: CameraId;
+      cameras: readonly CameraDescriptor[];
+    }>
   | Readonly<{ type: "cameraSuspended" }>
   | Readonly<{ type: "cameraResumed" }>
   | Readonly<{ type: "devicesUpdated"; cameras: readonly CameraDescriptor[] }>
@@ -23,14 +32,19 @@ export type AppAction =
 
 export function update(model: AppModel, action: AppAction): AppModel {
   switch (action.type) {
-    case "cameraRequestStarted": return { ...model, camera: { tag: "requesting" } };
+    case "cameraRequestStarted":
+      return { ...model, camera: { tag: "requesting" } };
     case "cameraStarted":
       return {
         ...model,
-        camera: { tag: "streaming", current: action.current === null ? none : some(action.current) },
+        camera: {
+          tag: "streaming",
+          current: action.current === null ? none : some(action.current),
+        },
         cameras: action.cameras,
       };
-    case "cameraFailed": return { ...model, camera: { tag: "blocked", error: action.error } };
+    case "cameraFailed":
+      return { ...model, camera: { tag: "blocked", error: action.error } };
     case "cameraSwitchStarted": {
       const current = model.camera.tag === "streaming" ? model.camera.current : none;
       return { ...model, camera: { tag: "switching", current, target: action.target } };
@@ -50,22 +64,33 @@ export function update(model: AppModel, action: AppAction): AppModel {
       return model.camera.tag === "suspended"
         ? { ...model, camera: { tag: "streaming", current: model.camera.current } }
         : model;
-    case "devicesUpdated": return { ...model, cameras: action.cameras };
+    case "devicesUpdated":
+      return { ...model, cameras: action.cameras };
     case "captureAdded": {
       const history = addCapture(model.history, action.entry);
       return {
         ...model,
         history,
-        memoryWarningShown: model.memoryWarningShown || shouldWarnAboutMemory(history, model.memoryWarningShown),
+        memoryWarningShown:
+          model.memoryWarningShown || shouldWarnAboutMemory(history, model.memoryWarningShown),
       };
     }
-    case "copyStarted": return { ...model, copy: { tag: "copying", captureId: action.captureId } };
-    case "copySucceeded": return { ...model, copy: { tag: "copied", captureId: action.captureId } };
+    case "copyStarted":
+      return { ...model, copy: { tag: "copying", captureId: action.captureId } };
+    case "copySucceeded":
+      return { ...model, copy: { tag: "copied", captureId: action.captureId } };
     case "copyFailed":
-      return { ...model, copy: { tag: "failed", captureId: action.captureId, error: action.error } };
-    case "copyDismissed": return { ...model, copy: { tag: "idle" } };
-    case "captureRemoved": return { ...model, history: removeCapture(model.history, action.captureId) };
-    case "historyCleared": return { ...model, history: [] };
-    case "memoryWarningAcknowledged": return { ...model, memoryWarningShown: true };
+      return {
+        ...model,
+        copy: { tag: "failed", captureId: action.captureId, error: action.error },
+      };
+    case "copyDismissed":
+      return { ...model, copy: { tag: "idle" } };
+    case "captureRemoved":
+      return { ...model, history: removeCapture(model.history, action.captureId) };
+    case "historyCleared":
+      return { ...model, history: [] };
+    case "memoryWarningAcknowledged":
+      return { ...model, memoryWarningShown: true };
   }
 }

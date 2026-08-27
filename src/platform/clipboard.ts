@@ -25,7 +25,10 @@ export function beginPngWrite(
   } catch (cause) {
     return Promise.resolve(err(mapClipboardError(cause)));
   }
-  return write.then(() => ok(undefined), (cause: unknown) => err(mapClipboardError(cause)));
+  return write.then(
+    () => ok(undefined),
+    (cause: unknown) => err(mapClipboardError(cause)),
+  );
 }
 
 export function mapClipboardError(cause: unknown): ClipboardError {

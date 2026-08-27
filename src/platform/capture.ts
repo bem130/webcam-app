@@ -14,6 +14,10 @@ export type CaptureOperation = Readonly<{
   encoded: Promise<Result<EncodedCapture, CaptureError>>;
   clipboard: Promise<Result<void, ClipboardError>>;
 }>;
+export type CaptureEncoder = Readonly<{
+  encodePng: (video: HTMLVideoElement) => Promise<Blob>;
+  encodeThumbnail: (png: Blob) => Promise<Blob>;
+}>;
 
 const MAX_LONG_EDGE_PX = 1920;
 const THUMBNAIL_EDGE_PX = 320;
@@ -62,7 +66,12 @@ export class CanvasCaptureEncoder {
       this.#thumbnailCanvas.width = dimensions.width;
       this.#thumbnailCanvas.height = dimensions.height;
       context.drawImage(bitmap, 0, 0, dimensions.width, dimensions.height);
-      return await canvasToBlob(this.#thumbnailCanvas, "image/jpeg", { tag: "pngEncodingFailed" }, 0.82);
+      return await canvasToBlob(
+        this.#thumbnailCanvas,
+        "image/jpeg",
+        { tag: "pngEncodingFailed" },
+        0.82,
+      );
     } catch (cause) {
       if (isTaggedCaptureError(cause)) throw cause;
       throw taggedCaptureError(mapEncodeFailure(cause));
@@ -76,7 +85,7 @@ let sharedEncoder: CanvasCaptureEncoder | null = null;
 
 export function beginCaptureAndCopy(
   video: HTMLVideoElement,
-  encoder = (sharedEncoder ??= new CanvasCaptureEncoder()),
+  encoder: CaptureEncoder = (sharedEncoder ??= new CanvasCaptureEncoder()),
   clipboardPort: ClipboardPort = browserClipboardPort(),
 ): CaptureOperation {
   const { width, height } = calculateTargetDimensions(video.videoWidth, video.videoHeight);
@@ -90,7 +99,10 @@ export function beginCaptureAndCopy(
       width,
       height,
     }))
-    .then((value) => ok(value), (cause: unknown) => err(captureErrorFrom(cause)));
+    .then(
+      (value) => ok(value),
+      (cause: unknown) => err(captureErrorFrom(cause)),
+    );
   return { encoded, clipboard };
 }
 
@@ -102,20 +114,34 @@ function canvasToBlob(
 ): Promise<Blob> {
   return new Promise((resolve, reject) => {
     try {
-      canvas.toBlob((blob) => {
-        if (blob === null) reject(taggedCaptureError(failure));
-        else resolve(blob);
-      }, type, quality);
+      canvas.toBlob(
+        (blob) => {
+          if (blob === null) reject(taggedCaptureError(failure));
+          else resolve(blob);
+        },
+        type,
+        quality,
+      );
     } catch (cause) {
       reject(taggedCaptureError(mapEncodeFailure(cause)));
     }
   });
 }
 
-type TaggedCaptureError = Readonly<{ marker: "capture-error"; error: CaptureError }>;
-const taggedCaptureError = (error: CaptureError): TaggedCaptureError => ({ marker: "capture-error", error });
+class TaggedCaptureError extends Error {
+  readonly error: CaptureError;
+
+  constructor(error: CaptureError) {
+    super(error.tag);
+    this.name = "TaggedCaptureError";
+    this.error = error;
+  }
+}
+
+const taggedCaptureError = (error: CaptureError): TaggedCaptureError =>
+  new TaggedCaptureError(error);
 const isTaggedCaptureError = (cause: unknown): cause is TaggedCaptureError =>
-  typeof cause === "object" && cause !== null && "marker" in cause && cause.marker === "capture-error";
+  cause instanceof TaggedCaptureError;
 
 function captureErrorFrom(cause: unknown): CaptureError {
   return isTaggedCaptureError(cause) ? cause.error : mapEncodeFailure(cause);

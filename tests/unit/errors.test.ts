@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapCameraError } from "../../src/platform/camera";
+import { cameraDescriptorsFromDevices, mapCameraError } from "../../src/platform/camera";
 import { mapClipboardError } from "../../src/platform/clipboard";
 
 describe("platform error mapping", () => {
@@ -19,5 +19,17 @@ describe("platform error mapping", () => {
     ["FutureBrowserError", "writeFailed"],
   ])("maps clipboard %s to %s", (name, tag) => {
     expect(mapClipboardError(new DOMException("", name)).tag).toBe(tag);
+  });
+
+  it("filters video inputs and supplies stable ordinal labels", () => {
+    const devices = cameraDescriptorsFromDevices([
+      { kind: "audioinput", deviceId: "mic", label: "Microphone" },
+      { kind: "videoinput", deviceId: "front", label: "" },
+      { kind: "videoinput", deviceId: "rear", label: "Rear Camera" },
+    ]);
+    expect(devices).toEqual([
+      { id: "front", label: "カメラ 1", facing: "unknown" },
+      { id: "rear", label: "Rear Camera", facing: "environment" },
+    ]);
   });
 });

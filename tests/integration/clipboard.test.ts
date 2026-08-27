@@ -5,7 +5,9 @@ describe("clipboard adapter contract", () => {
   it("calls clipboard.write synchronously before PNG settles", async () => {
     const events: string[] = [];
     let resolvePng!: (blob: Blob) => void;
-    const png = new Promise<Blob>((resolve) => { resolvePng = resolve; });
+    const png = new Promise<Blob>((resolve) => {
+      resolvePng = resolve;
+    });
     const port: ClipboardPort = {
       createItem: (value) => {
         events.push("create-item");

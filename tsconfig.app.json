@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "types": ["vite/client", "node"],
     "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "allowJs": false,
@@ -22,4 +23,3 @@
   },
   "include": ["src", "tests"]
 }
-

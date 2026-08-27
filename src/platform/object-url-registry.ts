@@ -6,7 +6,9 @@ export class ObjectUrlRegistry {
   readonly #urls = new Map<CaptureId, string>();
   readonly #api: ObjectUrlApi;
 
-  constructor(api: ObjectUrlApi = URL) { this.#api = api; }
+  constructor(api: ObjectUrlApi = URL) {
+    this.#api = api;
+  }
 
   get(id: CaptureId, blob: Blob): string {
     const existing = this.#urls.get(id);

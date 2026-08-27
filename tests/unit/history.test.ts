@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { addCapture, MEMORY_WARNING_BYTES, removeCapture, shouldWarnAboutMemory } from "../../src/core/history";
+import {
+  addCapture,
+  MEMORY_WARNING_BYTES,
+  removeCapture,
+  shouldWarnAboutMemory,
+} from "../../src/core/history";
 import { captureId, type CaptureEntry } from "../../src/core/model";
 import { none } from "../../src/core/result";
 

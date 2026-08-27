@@ -22,7 +22,9 @@ export function requestSpecificCamera(id: CameraId): Promise<Result<MediaStream,
   return requestCamera({ audio: false, video: { deviceId: { exact: id } } });
 }
 
-async function requestCamera(constraints: MediaStreamConstraints): Promise<Result<MediaStream, CameraError>> {
+async function requestCamera(
+  constraints: MediaStreamConstraints,
+): Promise<Result<MediaStream, CameraError>> {
   try {
     return ok(await navigator.mediaDevices.getUserMedia(constraints));
   } catch (cause) {
@@ -33,6 +35,12 @@ async function requestCamera(constraints: MediaStreamConstraints): Promise<Resul
 export async function enumerateCameras(): Promise<readonly CameraDescriptor[]> {
   if (navigator.mediaDevices?.enumerateDevices === undefined) return [];
   const devices = await navigator.mediaDevices.enumerateDevices();
+  return cameraDescriptorsFromDevices(devices);
+}
+
+export function cameraDescriptorsFromDevices(
+  devices: readonly Pick<MediaDeviceInfo, "deviceId" | "kind" | "label">[],
+): readonly CameraDescriptor[] {
   return devices
     .filter((device) => device.kind === "videoinput")
     .map((device, index) => ({
@@ -52,21 +60,28 @@ export function stopStream(stream: MediaStream | null): void {
 }
 
 export function setStreamEnabled(stream: MediaStream | null, enabled: boolean): void {
-  stream?.getVideoTracks().forEach((track) => { track.enabled = enabled; });
+  stream?.getVideoTracks().forEach((track) => {
+    track.enabled = enabled;
+  });
 }
 
 export function mapCameraError(cause: unknown): CameraError {
   switch (causeName(cause)) {
     case "NotAllowedError":
-    case "SecurityError": return { tag: "permissionDenied" };
+    case "SecurityError":
+      return { tag: "permissionDenied" };
     case "NotFoundError":
-    case "DevicesNotFoundError": return { tag: "noCamera" };
+    case "DevicesNotFoundError":
+      return { tag: "noCamera" };
     case "NotReadableError":
     case "TrackStartError":
-    case "AbortError": return { tag: "cameraUnavailable" };
+    case "AbortError":
+      return { tag: "cameraUnavailable" };
     case "OverconstrainedError":
-    case "ConstraintNotSatisfiedError": return { tag: "constraintsUnsatisfied" };
-    default: return { tag: "unknown", causeName: causeName(cause) };
+    case "ConstraintNotSatisfiedError":
+      return { tag: "constraintsUnsatisfied" };
+    default:
+      return { tag: "unknown", causeName: causeName(cause) };
   }
 }
 

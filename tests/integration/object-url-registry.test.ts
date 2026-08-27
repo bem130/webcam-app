@@ -5,7 +5,7 @@ import { ObjectUrlRegistry } from "../../src/platform/object-url-registry";
 describe("ObjectUrlRegistry", () => {
   it("creates once and revokes individual and remaining URLs", () => {
     const api = {
-      createObjectURL: vi.fn((_blob: Blob) => `blob:${Math.random()}`),
+      createObjectURL: vi.fn(() => `blob:${Math.random()}`),
       revokeObjectURL: vi.fn(),
     };
     const registry = new ObjectUrlRegistry(api);
