@@ -3,58 +3,104 @@ name: Verify and deploy GitHub Pages
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
+# Default to the minimum permission needed by the verification job.
+# The deployment job explicitly elevates only the permissions it needs.
 permissions:
   contents: read
 
+# Isolate concurrency by workflow and Git ref.
+#
+# Examples:
+#   main push:
+#     "Verify and deploy GitHub Pages-refs/heads/main"
+#
+#   PR #6:
+#     "Verify and deploy GitHub Pages-refs/pull/6/merge"
+#
+# Therefore:
+# - different PRs do not cancel one another;
+# - a PR cannot cancel a main deployment;
+# - newer runs of the same PR cancel obsolete runs;
+# - an in-progress main deployment is allowed to complete.
+#
+# For main, GitHub keeps at most one pending run and replaces an older
+# pending run with the newest one, so obsolete deployments do not queue
+# indefinitely.
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
+    name: Verify
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 24.14.1
           cache: npm
+
       - name: Install dependencies
         run: npm ci
-      - name: Install Playwright browsers
-        run: npx --no-install playwright install --with-deps chromium firefox webkit
+
+      # Run cheap/source-level verification before downloading the
+      # Playwright browser binaries. This fails faster on formatting,
+      # lint, type, unit/integration test, or build errors.
       - name: Verify source
         run: npm run verify
+
+      - name: Install Playwright browsers
+        run: npx --no-install playwright install --with-deps chromium firefox webkit
+
       - name: Run browser tests
         run: npm run test:e2e
-      - name: Configure GitHub Pages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+
+      # pull_request runs verify the application but must never produce
+      # a deployable Pages artifact.
+      #
+      # This also permits workflow_dispatch on main to perform a manual
+      # verified redeployment.
       - name: Upload GitHub Pages artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
         with:
           path: dist
 
   deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Deploy
+    if: github.ref == 'refs/heads/main'
     needs: verify
+
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
+    # Job-level permissions replace the workflow-level permissions.
+    # Grant only what the Pages deployment requires.
     permissions:
-      actions: read
+      contents: read
       pages: write
       id-token: write
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
