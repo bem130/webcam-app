@@ -55,8 +55,13 @@ export function App() {
     setStatus("capturing");
     setMessage("画像を作成しています…");
     const operation = beginCaptureAndCopy(video);
-    void Promise.all([operation.png, operation.clipboard]).then(
-      () => {
+    void Promise.all([operation.encoded, operation.clipboard]).then(
+      ([encoded, clipboard]) => {
+        if (encoded.tag === "err" || clipboard.tag === "err") {
+          setStatus("streaming");
+          setMessage(encoded.tag === "err" ? "画像を作成できませんでした。" : "撮影したが、コピーできませんでした。");
+          return;
+        }
         setStatus("copied");
         setMessage("Clipboardにコピーしました。");
         window.setTimeout(() => setStatus("streaming"), 1600);
@@ -89,4 +94,3 @@ export function App() {
     </main>
   );
 }
-
