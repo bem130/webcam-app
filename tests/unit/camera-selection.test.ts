@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseQuickSwapTarget, reconcileCurrentCamera } from "../../src/core/camera-selection";
+import { chooseQuickSwapTarget, reconcileCurrentCamera, shouldMirrorPreview } from "../../src/core/camera-selection";
 import { cameraId, type CameraDescriptor } from "../../src/core/model";
 import { none, some } from "../../src/core/result";
 
@@ -26,5 +26,11 @@ describe("camera selection", () => {
   it("selects the first remaining device when current disappears", () => {
     expect(reconcileCurrentCamera(cameras.slice(1), some(cameraId("front"))))
       .toEqual(some(cameraId("rear")));
+  });
+
+  it("mirrors only the front-facing live preview", () => {
+    expect(shouldMirrorPreview("user")).toBe(true);
+    expect(shouldMirrorPreview("environment")).toBe(false);
+    expect(shouldMirrorPreview("unknown")).toBe(false);
   });
 });

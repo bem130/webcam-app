@@ -1,4 +1,4 @@
-import type { CameraDescriptor, CameraId } from "./model";
+import type { CameraDescriptor, CameraFacing, CameraId } from "./model";
 import { none, some, type Option } from "./result";
 
 export function chooseQuickSwapTarget(
@@ -26,6 +26,10 @@ export function reconcileCurrentCamera(
   if (current.tag === "some" && hasCamera(cameras, current.value)) return current;
   const first = cameras[0];
   return first === undefined ? none : some(first.id);
+}
+
+export function shouldMirrorPreview(facing: CameraFacing): boolean {
+  return facing === "user";
 }
 
 function hasCamera(cameras: readonly CameraDescriptor[], id: CameraId): boolean {
