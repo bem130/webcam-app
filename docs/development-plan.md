@@ -295,9 +295,26 @@ Chromium sourceで観測されるPNG decode、Android system Clipboard用PNG再e
 
 ### Timing contract
 
-- shutterを共通originとし、applicationのportable representation完成時点を`clipboardRepresentationReady`、`navigator.clipboard.write()` settlementを`clipboardSettle`として別々に記録する。
-- representation完成後にClipboardがsettleする場合だけ、`browserClipboard = clipboardSettle - clipboardRepresentationReady`をderived timingとして表示する。representation完成前にwriteがrejectした場合は`Option.none`とし、負数を丸めてbrowser時間として報告しない。
-- 既存のsource acquisition、image decode、video-frame encode、Clipboard互換encode、thumbnail timingを維持し、routeごとに未実行stageを`Option.none`で表す。
+- durationとshutter-relative milestoneを異なる型・fieldで表現し、同じ`elapsedMs`として混在させない。
+
+```ts
+type CaptureStageDuration = Readonly<{
+  kind: "duration";
+  stage: "sourceAcquisition" | "videoFrameEncode" | "imageDecode" | "clipboardEncode" | "thumbnail";
+  durationMs: Option<number>;
+}>;
+
+type CaptureMilestone = Readonly<{
+  kind: "milestone";
+  milestone: "clipboardRepresentationReady" | "clipboardSettled";
+  offsetFromShutterMs: Option<number>;
+}>;
+```
+
+- shutterを共通originとし、applicationのportable representation完成時点を`clipboardRepresentationReady`、`navigator.clipboard.write()` settlementを`clipboardSettled`として別々のmilestone offsetに記録する。
+- representation完成後にClipboardがsettleする場合だけ、`browserClipboard = clipboardSettled.offsetFromShutterMs - clipboardRepresentationReady.offsetFromShutterMs`をderived timingとして表示する。representation完成前にwriteがrejectした場合は`Option.none`とし、負数を丸めてbrowser時間として報告しない。
+- 従来のClipboard write開始からsettlementまでを表していた`clipboardSettle` durationは廃止し、異なるoriginの値との減算を許さない。将来write duration自体が必要になった場合は`clipboardWriteDuration`として明示的に別計測する。
+- 既存のsource acquisition、image decode、video-frame encode、Clipboard互換encode、thumbnail durationを維持し、routeごとに未実行stageを`Option.none`で表す。
 - timingはlocal memory / details表示だけに保持し、network送信、永続化、自動route選択へ使用しない。
 - Android実機の暫定観測として、3000×4000 video-frame PNGは約10秒、2448×3264 video-frame PNGは約2秒、3000×4000 native still routeは約3秒を比較baselineにする。ただし自動testの固定性能閾値にはしない。
 
