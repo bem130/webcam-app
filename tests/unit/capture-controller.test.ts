@@ -6,7 +6,7 @@ import { err, ok, type Result } from "../../src/core/result";
 import type { CapturedImage, CaptureOperation } from "../../src/platform/capture";
 
 describe("capture controller", () => {
-  it("publishes the PNG before thumbnail and Clipboard settlement", async () => {
+  it("publishes the capture artifact before thumbnail and Clipboard settlement", async () => {
     const captured = deferred<Result<CapturedImage, never>>();
     const thumbnail = deferred<Result<Blob, never>>();
     const clipboard = deferred<Result<void, ClipboardError>>();
@@ -23,7 +23,15 @@ describe("capture controller", () => {
       (event) => events.push(event.type),
     );
 
-    captured.resolve(ok({ png: new Blob(["png"]), width: 640, height: 480 }));
+    captured.resolve(
+      ok({
+        blob: new Blob(["png"], { type: "image/png" }),
+        mimeType: "image/png",
+        width: 640,
+        height: 480,
+        route: "videoFrame",
+      }),
+    );
     await flushMicrotasks();
     expect(events).toEqual(["captureSucceeded"]);
 

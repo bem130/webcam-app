@@ -12,6 +12,10 @@ export type CaptureError =
   | Readonly<{ tag: "frameNotReady" }>
   | Readonly<{ tag: "canvasUnavailable" }>
   | Readonly<{ tag: "pngEncodingFailed" }>
+  | Readonly<{ tag: "thumbnailEncodingFailed" }>
+  | Readonly<{ tag: "photoCaptureFailed" }>
+  | Readonly<{ tag: "invalidImage" }>
+  | Readonly<{ tag: "imageDecodeFailed" }>
   | Readonly<{ tag: "memoryAllocationFailed" }>;
 
 export type ClipboardError =

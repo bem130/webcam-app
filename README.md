@@ -1,6 +1,6 @@
 # Camera Clipboard
 
-Camera Clipboard は、カメラの現在フレームを一度の操作で PNG として Clipboard へコピーする、ブラウザだけで動作する小さなユーティリティです。撮影画像はサーバー、写真ライブラリ、ファイル、ブラウザの永続ストレージへ保存せず、履歴は現在のタブのメモリだけに保持します。
+Camera Clipboard は、写真APIまたはカメラの現在フレームから一度の操作で画像を撮影し、Clipboardへコピーする、ブラウザだけで動作する小さなユーティリティです。撮影画像はサーバー、写真ライブラリ、ファイル、ブラウザの永続ストレージへ保存せず、履歴は現在のタブのメモリだけに保持します。
 
 設計の詳細は [docs/design.md](docs/design.md) を参照してください。
 
@@ -8,6 +8,9 @@ Camera Clipboard は、カメラの現在フレームを一度の操作で PNG �
 
 - ユーザー操作によるカメラ開始と live preview
 - shutter 一回で PNG を Clipboard へコピー
+- 対応cameraではnative写真APIを優先し、失敗時は最大解像度のvideo frameへfallback
+- 「写真優先」（default）と「動画フレーム」をsession内で選択可能
+- 履歴detailsで実際の撮影経路、native MIME、端末内のstage別処理時間を確認可能
 - コピーに失敗しても残る in-memory 履歴と再コピー
 - カメラ一覧からの選択と quick swap
 - 個別削除、確認付き全消去、Object URL の即時 revoke
@@ -15,6 +18,8 @@ Camera Clipboard は、カメラの現在フレームを一度の操作で PNG �
 - mobile bottom sheet / desktop side panel の responsive UI
 - keyboard、screen reader、reduced motion、forced colors への対応
 - browser / OS の標準 UI からの PWA install
+
+native写真APIが返したencoded Blobは履歴用に再encodeせず保持します。Clipboardはbrowser間の互換性を優先して`image/png`を使うため、native形式がPNG以外の場合はClipboard用representationだけをPNGへ変換します。写真API非対応・capability取得失敗・撮影失敗時は、設定を書き換えずvideo frameへ静かにfallbackします。
 
 ## PWA install
 

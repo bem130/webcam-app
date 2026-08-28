@@ -8,16 +8,19 @@ import {
 import { captureId, type CaptureEntry } from "../../src/core/model";
 import { none, some } from "../../src/core/result";
 
-function entry(id: string, pngBytes = 10, thumbnailBytes = 2): CaptureEntry {
+function entry(id: string, imageBytes = 10, thumbnailBytes = 2): CaptureEntry {
   return {
     id: captureId(id),
     capturedAtEpochMs: 1,
     camera: none,
     widthPx: 100,
     heightPx: 50,
-    png: { size: pngBytes } as Blob,
+    blob: { size: imageBytes } as Blob,
+    mimeType: "image/png",
+    preference: "photoPreferred",
+    route: "videoFrame",
     thumbnail: some({ size: thumbnailBytes } as Blob),
-    byteLength: pngBytes,
+    byteLength: imageBytes,
   };
 }
 

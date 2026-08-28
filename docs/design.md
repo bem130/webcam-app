@@ -2,8 +2,8 @@
 
 | 項目 | 内容 |
 | --- | --- |
-| 文書状態 | PWA install拡張を含む実装設計 |
-| Version | 0.2.0 |
+| 文書状態 | V2 Phase 3 native still captureまでの実装設計 |
+| Version | 0.3.0 |
 | 作成日 | 2026-08-27 |
 | 仮称 | Camera Clipboard |
 | 対象 | mobile / tablet / desktop のmodern browser |
@@ -12,7 +12,7 @@
 
 ## 0. 方針
 
-本アプリを「現在のcamera frameを一度の操作でsystem Clipboardへコピーする、小さなclient-side utility」と定義する。中心となる設計上の注意点は次の四点である。
+本アプリを「cameraのnative stillまたは現在frameを一度の操作でsystem Clipboardへコピーする、小さなclient-side utility」と定義する。中心となる設計上の注意点は次の四点である。
 
 1. アプリ自身は撮影画像を永続化せず、serverへ送信しない。撮影履歴は現在のdocumentが生存している間だけmemory上に保持する。
 2. 撮影とClipboard書込みを一つの明確なprimary actionにまとめる。camera切替と履歴参照は常に短い操作で到達可能にする。
@@ -46,7 +46,7 @@ camera previewを表示し、shutterを押すと静止画をClipboardへコピ�
 | --- | --- | --- |
 | FR-01 | user actionを起点としたcamera permission要求 | 必須 |
 | FR-02 | live camera preview | 必須 |
-| FR-03 | 現在frameのPNG化とClipboardへのcopy | 必須 |
+| FR-03 | 写真API優先または現在video frameによる撮影とClipboardへのcopy | 必須 |
 | FR-04 | 撮影画像のin-memory履歴 | 必須 |
 | FR-05 | 履歴画像のpreviewと再copy | 必須 |
 | FR-06 | 複数cameraの列挙、任意選択、quick swap | 必須 |
@@ -57,6 +57,7 @@ camera previewを表示し、shutterを押すと静止画をClipboardへコピ�
 | FR-11 | camera接続・切断への追従 | 推奨 |
 | FR-12 | tabがbackgroundへ移った際のcamera suspendと復帰 | 推奨 |
 | FR-13 | browser / OS標準UIからのPWA install | 必須 |
+| FR-14 | `photoPreferred` / `videoFrame`のsession内選択とactual route表示 | 必須 |
 
 ### 2.2 v1に含めない機能
 
@@ -144,6 +145,7 @@ live previewを画面の主役とし、常設controlは最小限にする。
 | --- | --- | --- |
 | 上部中央 | 現在camera名のselector pill | camera一覧をmenuとして開く |
 | 上部右 | camera稼働表示 | 「カメラ使用中」をiconとtextで示す |
+| 上部中央 | 撮影方式selector | 写真優先または動画フレームを選択する。写真API非対応時は写真優先をdisabledにする |
 | 下部左 | 最新履歴thumbnail + 件数badge | 履歴を開く |
 | 下部中央 | shutter | 撮影し、履歴追加とClipboard copyを行う |
 | 下部右 | camera quick swap | 現在cameraと直前cameraを切り替える |
@@ -154,9 +156,9 @@ cameraが一台だけの場合、quick swapは非表示とし、空いた場所�
 
 1. userがshutterをactivateする。
 2. 画面全体へ80 ms以下の軽いwhite flashを表示する。`prefers-reduced-motion: reduce`ではflashを省略する。
-3. current frameをPNG Blobへencodeする。
-4. 同じ操作のuser activationを失う前にClipboard writeを開始する。
-5. encode成功時点で、Clipboard結果と独立に履歴へ追加する。
+3. configured `CapturePreference`をruntime capabilityへ解決する。defaultの`photoPreferred`では`ImageCapture.takePhoto()`を試し、非対応・失敗時だけvideo-frame PNGへfallbackする。`videoFrame`では写真APIを呼ばない。
+4. 同じ操作のuser activationを失う前に、portableな`image/png` Clipboard representationのwriteを開始する。
+5. native Blobまたはvideo-frame PNGのcapture artifact完成時点で、thumbnailとClipboard変換・settlementから独立して履歴へ追加する。
 6. Clipboard成功時は「Clipboardにコピーした」を短いstatus pillとscreen reader live regionへ表示する。
 7. Clipboard失敗時は「撮影したが、コピーできなかった」を表示し、「再コピー」を提供する。
 
@@ -288,7 +290,7 @@ stateDiagram-v2
     CaptureFailed --> Ready: dismiss
 ```
 
-`CopyFailed`でもencode済みBlobはhistoryへ追加する。`CaptureFailed`では有効なBlobが存在しないためhistoryへ追加しない。
+`CopyFailed`でもcapture artifactはhistoryへ追加する。`CaptureFailed`では有効なBlobが存在しないためhistoryへ追加しない。`photoPreferred`からvideo-frameへfallbackした場合は成功として扱い、preferenceを書き換えずactual routeだけを`videoFrame`として記録する。
 
 ## 7. Capture and Clipboard sequence
 
@@ -297,39 +299,46 @@ sequenceDiagram
     actor User
     participant UI
     participant Runtime
-    participant Canvas
+    participant Camera
+    participant Converter
     participant Clipboard
     User->>UI: shutterをactivate
-    UI->>Runtime: captureAndCopy(video)
-    Runtime->>Canvas: PNG Promiseを生成
-    Runtime->>Clipboard: write(ClipboardItem(PNG Promise))
+    UI->>Runtime: captureAndCopy(preference)
+    Runtime->>Camera: native stillまたはvideo frameを要求
+    Runtime->>Clipboard: write(ClipboardItem(PNG representation Promise))
     Note over Runtime,Clipboard: awaitより前に呼ぶ
-    Canvas-->>Runtime: PNG Blob
-    Runtime-->>UI: historyへ追加
+    Camera-->>Runtime: native Blobまたはvideo-frame PNG
+    Runtime-->>UI: native artifactをhistoryへ追加
+    Runtime->>Converter: 必要な場合だけClipboard用PNGへ変換
+    Converter-->>Clipboard: PNG representation
     Clipboard-->>Runtime: copy success / failure
     Runtime-->>UI: typed outcome
 ```
 
 Safari/WebKitではClipboard writeにuser gestureが必要である。したがってbutton handler内でBlob生成を`await`してから`navigator.clipboard.write()`を呼ぶ実装は禁止する。PNGを生成する`Promise<Blob>`を`ClipboardItem`へ渡し、`clipboard.write()`自体を同期的なevent handler call stack内で開始する。[WebKit: Async Clipboard API](https://webkit.org/blog/10855/async-clipboard-api/) / [MDN: Clipboard.write()](https://developer.mozilla.org/en-US/docs/Web/API/Clipboard/write)
 
-概念的な実装は次の形とする。
+概念的な実装は次の形とする。capture形式とClipboard representationは同じ型にしない。
 
 ```ts
-function captureAndCopy(video: HTMLVideoElement): CaptureOperation {
-  const png: Promise<Blob> = encodeVisibleFrameAsPng(video);
+function captureAndCopy(
+  video: HTMLVideoElement,
+  preference: CapturePreference,
+): CaptureOperation {
+  const captured: Promise<CapturedImage> = captureArtifact(video, preference);
+  const clipboardPng = captured.then(toPortableClipboardPng);
   const clipboard = navigator.clipboard.write([
-    new ClipboardItem({ "image/png": png }),
+    new ClipboardItem({ "image/png": clipboardPng }),
   ]);
 
   return {
-    captured: observePng(png),
-    thumbnail: observeThumbnail(png),
+    captured: observeCapture(captured),
+    thumbnail: observeThumbnail(captured),
     clipboard: observeClipboard(clipboard),
   };
 }
 ```
 
-この関数の呼出しと`clipboard.write()`の間へ`await`、`queueMicrotask`、`setTimeout`、component effectを挟まない。`captured`、`thumbnail`、`clipboard`は独立してsettleする。PNG完成直後にhistoryへ追加してcapture busyを解除し、thumbnailまたはClipboardの完了を待たない。capture失敗後にClipboard resultが到着してもcapture errorを上書きしない。
+この関数の呼出しと`clipboard.write()`の間へ`await`、`queueMicrotask`、`setTimeout`、component effectを挟まない。`captured`、`thumbnail`、`clipboard`は独立してsettleする。native Blobまたはvideo-frame PNG完成直後にhistoryへ追加してcapture busyを解除し、thumbnail、Clipboard用PNG変換、Clipboard settlementを待たない。capture失敗後にClipboard resultが到着してもcapture errorを上書きしない。
 
 ## 8. Technical architecture
 
@@ -434,14 +443,21 @@ type CameraDescriptor = Readonly<{
   facing: "user" | "environment" | "left" | "right" | "unknown";
 }>;
 
+type CapturePreference = "photoPreferred" | "videoFrame";
+type CaptureRoute = "photo" | "videoFrame";
+type ImageMimeType = `image/${string}`;
+
 type CaptureEntry = Readonly<{
   id: CaptureId;
   capturedAtEpochMs: number;
   camera: Option<CameraId>;
   widthPx: number;
   heightPx: number;
-  png: Blob;
-  thumbnail: Blob;
+  blob: Blob;
+  mimeType: ImageMimeType;
+  preference: CapturePreference;
+  route: CaptureRoute;
+  thumbnail: Option<Blob>;
   byteLength: number;
 }>;
 
@@ -471,6 +487,10 @@ type CaptureError =
   | Readonly<{ tag: "frameNotReady" }>
   | Readonly<{ tag: "canvasUnavailable" }>
   | Readonly<{ tag: "pngEncodingFailed" }>
+  | Readonly<{ tag: "thumbnailEncodingFailed" }>
+  | Readonly<{ tag: "photoCaptureFailed" }>
+  | Readonly<{ tag: "invalidImage" }>
+  | Readonly<{ tag: "imageDecodeFailed" }>
   | Readonly<{ tag: "memoryAllocationFailed" }>;
 
 type ClipboardError =
@@ -529,23 +549,24 @@ stream取得後、`MediaStreamTrack.getCapabilities()`がwidth / height rangeを
 
 | 項目 | 仕様 |
 | --- | --- |
-| MIME type | `image/png` |
-| Dimensions | 実際のsource frame dimensionsを維持し、application側でupscale / downscaleしない。 |
+| Capture artifact MIME | native stillは`takePhoto()`が返すvalidated `image/*`、video frameは`image/png` |
+| Clipboard MIME | portable baselineは`image/png` |
+| Dimensions | native stillまたは実際のsource frame dimensionsを維持し、application側でupscale / downscaleしない。 |
 | Crop | なし |
-| Metadata | Canvas再encodeによりsource metadataを引き継がない |
+| Metadata | video frameはCanvas再encode、native stillは返却Blobをそのまま保持する。metadataは表示・永続化・送信しない |
 | Orientation | 画面上の正立方向へnormalize |
 | Color | browserのCanvas出力に従う。v1では明示的color profile変換を行わない。 |
 
-PNGを採用する理由は、Async Clipboard APIでbrowser間の共通対応が最も明確なimage formatだからである。MDNはbrowserが一般にPNG image writeを実装すると説明し、WebKitも`image/png`をsupported representationとしている。[MDN: Clipboard.write()](https://developer.mozilla.org/en-US/docs/Web/API/Clipboard/write) / [WebKit: Async Clipboard API](https://webkit.org/blog/10855/async-clipboard-api/)
+PNGはcapture domainの固定形式ではなくClipboard互換representationとして採用する。Clipboard仕様でportableなmandatory image write形式は`image/png`である。`takePhoto()`のMIMEは非同期に返却Blobから確定するため、Phase 3ではnative BlobがPNGならそのまま渡し、それ以外はClipboard用にだけPNG変換する。historyにはnative Blobを再encodeせず保持する。[W3C: Clipboard API mandatory data types](https://www.w3.org/TR/clipboard-apis/#mandatory-data-types-x) / [WebKit: Async Clipboard API](https://webkit.org/blog/10855/async-clipboard-api/)
 
 ### 10.2 Encode
 
 - 一つのreusable off-DOM canvasを用いる。
-- source dimensionsを検証し、original PNGには同じdimensionsを使う。thumbnailだけはlong edge 320 pxへ縮小する。
+- source dimensionsを検証し、capture artifactには同じdimensionsを使う。thumbnailだけはlong edge 320 pxへ縮小する。
 - front previewのCSS transformをCanvasへ適用しない。
 - `drawImage(video, 0, 0, width, height)`後に`canvas.toBlob(..., "image/png")`を呼ぶ。
 - `toBlob`が`null`を返した場合は`pngEncodingFailed`とする。
-- encode完了後に320 px square以内のJPEG thumbnailを別canvasで生成する。thumbnailはUI専用でありClipboardには使わない。
+- capture artifact完成後に320 px square以内のJPEG thumbnailを別canvasで生成する。thumbnailはUI専用でありClipboardには使わない。
 - 一時`ImageBitmap`を用いた場合は必ず`close()`する。
 
 ## 11. In-memory history and resource management
@@ -566,7 +587,7 @@ PNGを採用する理由は、Async Clipboard APIでbrowser間の共通対応が
 - UI adapterが`CaptureId -> objectURL` registryを持つ。
 - entry削除時、全消去時、component teardown時に`URL.revokeObjectURL()`を呼ぶ。
 - 同じBlobに対してrenderごとにURLを再生成しない。
-- history gridではoriginal PNGをdecodeせず、thumbnail Blobを使う。
+- history gridではoriginal capture artifactをdecodeせず、thumbnail Blobを使う。
 
 ## 12. Error UX and recovery
 
@@ -697,10 +718,11 @@ UA文字列やbrowser名で機能を決めず、capability detectionを使う。
 1. secure context
 2. `MediaDevices.getUserMedia`
 3. `MediaDevices.enumerateDevices`
-4. Canvas 2D + PNG Blob encode
-5. `ClipboardItem`
-6. `Clipboard.write`
-7. `image/png` Clipboard write
+4. optional `ImageCapture.getPhotoCapabilities()` / `takePhoto()`
+5. Canvas 2D + PNG Blob encode
+6. `ClipboardItem`
+7. `Clipboard.write`
+8. `image/png` Clipboard write
 
 `ClipboardItem.supports("image/png")`が存在する場合は事前検査に使う。存在しない場合は実際のwrite結果をtyped errorへ変換する。`devicechange`、`backdrop-filter`、`ImageBitmap`はoptional enhancementとする。
 
@@ -720,11 +742,13 @@ Clipboard APIはbrowser間でpermission modelとuser activationの扱いが異�
 | --- | --- |
 | NFR-01 | production JavaScript initial transferをgzip 80 KiB以下に保つことを目標とする。 |
 | NFR-02 | camera permission許可からfirst live frameまで、device依存時間を除くapplication overheadを100 ms以下にする。 |
-| NFR-03 | browserがnegotiationしたsource frameのshutterからhistory追加まで、reference deviceでp95を計測し、解像度別に記録する。 |
+| NFR-03 | shutterからhistory追加までをactual route・dimensions別に計測し、source acquisition、video-frame PNG、image decode、Clipboard用PNG変換、thumbnail、Clipboard settlementを端末内で分離表示する。 |
 | NFR-04 | copy処理中のlong taskを50 ms未満へ分割し、UI feedbackを先にpaint可能にする。 |
-| NFR-05 | history gridでoriginal PNGをdecodeせずthumbnailを使う。 |
+| NFR-05 | history gridでoriginal capture artifactをdecodeせずthumbnailを使う。 |
 | NFR-06 | background時にvideo trackをdisableし、不要なcamera使用と電力消費を抑える。 |
 | NFR-07 | layout shiftによりshutter位置を変化させない。 |
+
+Android実測では3000×4000 video-frame PNGが約10秒、2448×3264が約2秒だった。画素数だけで原因を確定せず、上記stage timingでnative artifact完成とClipboard互換変換を分離して評価する。Phase 3では最大previewを維持し、解像度ceilingやauto adaptive routeは導入しない。
 
 PNG encodeがmain threadを長く占有するbrowserでは、OffscreenCanvasのsupportを検査してworker encodeを将来導入できるよう`CaptureEncoder` boundaryを保つ。ただしSafariのClipboard user activationを維持するため、Clipboard write開始自体はUI event handler内に残す。
 
@@ -748,7 +772,7 @@ PNG encodeがmain threadを長く占有するbrowserでは、OffscreenCanvasのs
 - empty device labelのfallback
 - 古いswitch transaction完了時にstreamをstopすること
 - `clipboard.write()`が最初の`await`より前に呼ばれること
-- copy失敗時もPNG Promise成功ならhistoryへ追加すること
+- copy失敗時もcapture artifact成功ならhistoryへ追加すること
 - Object URLの生成回数とrevoke回数
 
 ### 17.3 Browser E2E
@@ -834,10 +858,11 @@ v1は次をすべて満たした時点で完成とする。
 
 | Decision | 採用 | 理由 |
 | --- | --- | --- |
-| Image format | PNG | image Clipboard writeのengine間共通性を優先する。 |
+| Capture artifact format | native形式またはPNG | `takePhoto()`のencoded Blobは再encodeせず保持し、video frameだけPNG化する。 |
+| Clipboard representation | PNG baseline | engine間でportableなmandatory image write形式を優先する。 |
 | Persistence | なし | 明示要件。履歴はcurrent document memoryだけに置く。 |
 | History eviction | silent evictionなし | 「reloadまで残る」という期待を優先する。memory warningは出す。 |
-| Capture API | video + Canvas | `ImageCapture.takePhoto()`よりbrowser supportと挙動の一貫性を優先する。 |
+| Capture API | `photoPreferred` default + video fallback | `ImageCapture.takePhoto()`をprogressive enhancementとし、unsupported / failure時も撮影を維持する。 |
 | Preview fit | contain | 出力に含まれる全範囲をpreviewで見せる。 |
 | Front mirror | previewのみ | selfie操作の自然さと出力内文字の正方向を両立する。 |
 | Framework | Preact | declarative UIと小さいbundleの均衡を取る。 |

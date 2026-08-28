@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "preact/hooks";
-import type { CaptureEntry, CaptureId } from "../core/model";
+import type { CaptureDiagnostics, CaptureEntry, CaptureId } from "../core/model";
 import { CloseIcon, CopyIcon, TrashIcon } from "./icons";
 
 type HistoryPanelProps = Readonly<{
@@ -8,6 +8,7 @@ type HistoryPanelProps = Readonly<{
   selected: CaptureId | null;
   thumbnailUrl: (entry: CaptureEntry) => string | null;
   detailUrl: (entry: CaptureEntry) => string;
+  diagnostics: (entry: CaptureEntry) => CaptureDiagnostics;
   onClose: () => void;
   onSelect: (id: CaptureId | null) => void;
   onRecopy: (entry: CaptureEntry) => void;
@@ -77,6 +78,7 @@ export function HistoryPanel(props: HistoryPanelProps) {
         <CaptureDetail
           entry={selectedEntry}
           url={props.detailUrl(selectedEntry)}
+          diagnostics={props.diagnostics(selectedEntry)}
           onBack={() => props.onSelect(null)}
           onRecopy={() => props.onRecopy(selectedEntry)}
           onDelete={() => props.onDelete(selectedEntry.id)}
@@ -120,6 +122,7 @@ function HistoryGrid(props: HistoryPanelProps) {
               <span>{formatTime(entry.capturedAtEpochMs)}</span>
               <small>
                 {entry.widthPx} × {entry.heightPx} · {formatBytes(entry.byteLength)}
+                {` · ${captureRouteLabel(entry.route)}`}
               </small>
             </button>
           );
@@ -136,12 +139,20 @@ function HistoryGrid(props: HistoryPanelProps) {
 type CaptureDetailProps = Readonly<{
   entry: CaptureEntry;
   url: string;
+  diagnostics: CaptureDiagnostics;
   onBack: () => void;
   onRecopy: () => void;
   onDelete: () => void;
 }>;
 
-function CaptureDetail({ entry, url, onBack, onRecopy, onDelete }: CaptureDetailProps) {
+function CaptureDetail({
+  entry,
+  url,
+  diagnostics,
+  onBack,
+  onRecopy,
+  onDelete,
+}: CaptureDetailProps) {
   return (
     <section class="capture-detail" aria-labelledby="capture-detail-title">
       <button class="back-button" type="button" onClick={onBack}>
@@ -152,6 +163,36 @@ function CaptureDetail({ entry, url, onBack, onRecopy, onDelete }: CaptureDetail
       <p>
         {entry.widthPx} × {entry.heightPx} px · {formatBytes(entry.byteLength)}
       </p>
+      <dl class="capture-metadata">
+        <div>
+          <dt>設定</dt>
+          <dd>{capturePreferenceLabel(entry.preference)}</dd>
+        </div>
+        <div>
+          <dt>実際の撮影経路</dt>
+          <dd>{captureRouteLabel(entry.route)}</dd>
+        </div>
+        <div>
+          <dt>画像形式</dt>
+          <dd>{entry.mimeType}</dd>
+        </div>
+        <div>
+          <dt>Clipboard形式</dt>
+          <dd>image/png</dd>
+        </div>
+      </dl>
+      <details class="capture-timing">
+        <summary>端末内の処理時間</summary>
+        <dl>
+          {TIMING_ROWS.map(([stage, label]) => (
+            <div key={stage}>
+              <dt>{label}</dt>
+              <dd>{formatTiming(diagnostics[stage])}</dd>
+            </div>
+          ))}
+        </dl>
+        <p class="capture-user-agent">{navigator.userAgent}</p>
+      </details>
       <div class="detail-actions">
         <button class="primary-button" type="button" onClick={onRecopy}>
           <CopyIcon />
@@ -177,4 +218,26 @@ function formatTime(epochMs: number): string {
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+const TIMING_ROWS = [
+  ["sourceAcquisition", "写真取得"],
+  ["videoFrameEncode", "動画フレームPNG"],
+  ["imageDecode", "画像寸法の確認"],
+  ["clipboardEncode", "Clipboard用PNG変換"],
+  ["thumbnail", "サムネイル"],
+  ["clipboardSettle", "Clipboard完了"],
+] as const;
+
+function formatTiming(value: CaptureDiagnostics[keyof CaptureDiagnostics]): string {
+  if (value === undefined) return "計測待ち";
+  return value.tag === "none" ? "未実行" : `${Math.round(value.value)} ms`;
+}
+
+function capturePreferenceLabel(preference: CaptureEntry["preference"]): string {
+  return preference === "photoPreferred" ? "写真優先" : "動画フレーム";
+}
+
+function captureRouteLabel(route: CaptureEntry["route"]): string {
+  return route === "photo" ? "写真API" : "動画フレーム";
 }

@@ -15,10 +15,11 @@ import {
   captureId,
   initialModel,
   type CameraId,
+  type CaptureDiagnostics,
   type CaptureEntry,
   type CaptureId,
 } from "../core/model";
-import { none } from "../core/result";
+import { none, type Option } from "../core/result";
 import { update } from "../core/update";
 import {
   currentCameraId,
@@ -29,11 +30,12 @@ import {
   setStreamEnabled,
   stopStream,
 } from "../platform/camera";
-import { beginCaptureAndCopy } from "../platform/capture";
-import { beginPngWrite, browserClipboardPort, PNG_MIME } from "../platform/clipboard";
+import { beginCaptureAndCopy, beginCapturedImageCopy } from "../platform/capture";
+import { PNG_MIME } from "../platform/clipboard";
 import { bindDocumentLifecycle } from "../platform/lifecycle";
 import { ObjectUrlRegistry } from "../platform/object-url-registry";
 import { AppOverlayPlane } from "./app-overlay-plane";
+import { discoverNativePhotoCapture, type NativePhotoCapture } from "../platform/native-photo";
 import { CameraView } from "./camera-view";
 import { ConfirmDialog } from "./confirm-dialog";
 import { ErrorView } from "./error-view";
@@ -53,13 +55,35 @@ export function App() {
   const [flash, setFlash] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [memoryNoticeDismissed, setMemoryNoticeDismissed] = useState(false);
+  const [captureDiagnostics, setCaptureDiagnostics] = useState<
+    ReadonlyMap<CaptureId, CaptureDiagnostics>
+  >(new Map());
   const videoRef = useRef<HTMLVideoElement>(null);
   const placeholderRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const nativePhotoRef = useRef<Option<NativePhotoCapture>>(none);
+  const ignoredDiagnosticsRef = useRef(new Set<CaptureId>());
   const switchTransactionRef = useRef(0);
   const thumbnailUrls = useMemo(() => new ObjectUrlRegistry(), []);
   const detailUrls = useMemo(() => new ObjectUrlRegistry(), []);
   const capabilityMessage = preflightMessage();
+
+  const discoverPhotoCapabilities = useCallback((stream: MediaStream) => {
+    nativePhotoRef.current = none;
+    dispatch({ type: "photoCapabilityUpdated", capability: { tag: "checking" } });
+    const track = stream.getVideoTracks()[0];
+    void discoverNativePhotoCapture(track).then((nativePhoto) => {
+      if (streamRef.current !== stream || track?.readyState !== "live") return;
+      nativePhotoRef.current = nativePhoto;
+      dispatch({
+        type: "photoCapabilityUpdated",
+        capability:
+          nativePhoto.tag === "some"
+            ? { tag: "supported", settings: nativePhoto.value.maximum }
+            : { tag: "unsupported" },
+      });
+    });
+  }, []);
 
   const currentId =
     model.camera.tag === "streaming" ||
@@ -79,6 +103,7 @@ export function App() {
     return attachCameraStream(video, stream, () => {
       if (streamRef.current === stream) {
         streamRef.current = null;
+        nativePhotoRef.current = none;
         dispatch({ type: "cameraFailed", error: { tag: "streamEnded" } });
       }
     });
@@ -90,6 +115,7 @@ export function App() {
     const transaction = switchTransactionRef.current;
     stopStream(streamRef.current);
     streamRef.current = null;
+    nativePhotoRef.current = none;
     dispatch({ type: "cameraRequestStarted" });
     setFeedback(null);
     const result = await requestInitialCamera();
@@ -110,12 +136,14 @@ export function App() {
         cameras,
         videoSettings,
       });
+      discoverPhotoCapabilities(result.value);
     } catch (cause) {
       stopStream(result.value);
       streamRef.current = null;
+      nativePhotoRef.current = none;
       dispatch({ type: "cameraFailed", error: mapCameraError(cause) });
     }
-  }, [attachStream, capabilityMessage]);
+  }, [attachStream, capabilityMessage, discoverPhotoCapabilities]);
 
   const switchCamera = useCallback(
     async (target: CameraId) => {
@@ -132,6 +160,7 @@ export function App() {
       const transaction = switchTransactionRef.current;
       const oldStream = streamRef.current;
       streamRef.current = null;
+      nativePhotoRef.current = none;
       stopStream(oldStream);
       const requested = await requestSpecificCamera(target);
       if (transaction !== switchTransactionRef.current) {
@@ -151,10 +180,12 @@ export function App() {
             cameras,
             videoSettings,
           });
+          discoverPhotoCapabilities(requested.value);
           return;
         } catch {
           stopStream(requested.value);
           streamRef.current = null;
+          nativePhotoRef.current = none;
         }
       }
 
@@ -170,6 +201,7 @@ export function App() {
             const cameras = await enumerateCameras();
             clearSwitchPlaceholder(placeholderRef.current);
             dispatch({ type: "cameraStarted", current: oldId, cameras, videoSettings });
+            discoverPhotoCapabilities(restored.value);
             setFeedback({
               tone: "error",
               text: "選択したカメラへ切り替えられなかったため、元のカメラへ戻しました。",
@@ -178,6 +210,7 @@ export function App() {
           } catch {
             stopStream(restored.value);
             streamRef.current = null;
+            nativePhotoRef.current = none;
           }
         }
       }
@@ -186,7 +219,7 @@ export function App() {
       clearSwitchPlaceholder(placeholderRef.current);
       dispatch({ type: "cameraFailed", error });
     },
-    [attachStream, model.camera],
+    [attachStream, discoverPhotoCapabilities, model.camera],
   );
 
   const capture = useCallback(() => {
@@ -194,24 +227,61 @@ export function App() {
     if (video === null || model.camera.tag !== "streaming" || captureBusy) return;
     const captureCamera = model.camera.current;
     const id = captureId(crypto.randomUUID());
+    ignoredDiagnosticsRef.current.delete(id);
     const capturedAtEpochMs = Date.now();
     setCaptureBusy(true);
     setFlash(true);
     window.setTimeout(() => setFlash(false), 75);
     dispatch({ type: "copyStarted", captureId: id });
-    const operation = beginCaptureAndCopy(video);
+    const capturePreference = model.capturePreference;
+    const operation = beginCaptureAndCopy(video, {
+      nativePhoto: nativePhotoRef.current,
+      preference: capturePreference,
+      observeTiming: (measurement) => {
+        if (ignoredDiagnosticsRef.current.has(id)) return;
+        setCaptureDiagnostics((current) => {
+          const next = new Map(current);
+          next.set(id, {
+            ...(current.get(id) ?? {}),
+            [measurement.stage]: measurement.elapsedMs,
+          });
+          return next;
+        });
+      },
+    });
     observeCaptureOperation(id, operation, (event: CaptureLifecycleEvent) => {
       switch (event.type) {
         case "captureSucceeded": {
+          setCaptureDiagnostics((current) => {
+            const next = new Map(current);
+            const diagnostics = current.get(id) ?? {};
+            next.set(
+              id,
+              event.image.route === "photo"
+                ? {
+                    ...diagnostics,
+                    videoFrameEncode: diagnostics.videoFrameEncode ?? none,
+                  }
+                : {
+                    ...diagnostics,
+                    sourceAcquisition: diagnostics.sourceAcquisition ?? none,
+                    imageDecode: diagnostics.imageDecode ?? none,
+                  },
+            );
+            return next;
+          });
           const entry: CaptureEntry = {
             id,
             capturedAtEpochMs,
             camera: captureCamera,
             widthPx: event.image.width,
             heightPx: event.image.height,
-            png: event.image.png,
+            blob: event.image.blob,
+            mimeType: event.image.mimeType,
+            preference: capturePreference,
+            route: event.image.route,
             thumbnail: none,
-            byteLength: event.image.png.size,
+            byteLength: event.image.blob.size,
           };
           setCaptureBusy(false);
           dispatch({ type: "captureAdded", entry });
@@ -219,6 +289,8 @@ export function App() {
         }
         case "captureFailed":
           setCaptureBusy(false);
+          ignoredDiagnosticsRef.current.add(event.captureId);
+          setCaptureDiagnostics((current) => withoutMapKey(current, event.captureId));
           dispatch({ type: "copyDismissed" });
           setFeedback({ tone: "error", text: captureErrorMessage(event.error) });
           break;
@@ -239,11 +311,11 @@ export function App() {
           break;
       }
     });
-  }, [captureBusy, model.camera]);
+  }, [captureBusy, model.camera, model.capturePreference]);
 
   const recopy = useCallback((entry: CaptureEntry) => {
     dispatch({ type: "copyStarted", captureId: entry.id });
-    const write = beginPngWrite(Promise.resolve(entry.png), browserClipboardPort());
+    const write = beginCapturedImageCopy({ blob: entry.blob, mimeType: entry.mimeType });
     void write.then((result) => {
       if (result.tag === "ok") {
         dispatch({ type: "copySucceeded", captureId: entry.id });
@@ -259,6 +331,8 @@ export function App() {
     (id: CaptureId) => {
       thumbnailUrls.revoke(id);
       detailUrls.revoke(id);
+      ignoredDiagnosticsRef.current.add(id);
+      setCaptureDiagnostics((current) => withoutMapKey(current, id));
       dispatch({ type: "captureRemoved", captureId: id });
       setSelectedCapture(null);
       setFeedback({ tone: "neutral", text: "履歴から削除しました。" });
@@ -269,11 +343,13 @@ export function App() {
   const clearHistory = useCallback(() => {
     thumbnailUrls.revokeAll();
     detailUrls.revokeAll();
+    model.history.forEach((entry) => ignoredDiagnosticsRef.current.add(entry.id));
+    setCaptureDiagnostics(new Map());
     dispatch({ type: "historyCleared" });
     setSelectedCapture(null);
     setConfirmClear(false);
     setFeedback({ tone: "neutral", text: "すべての履歴を消去しました。" });
-  }, [detailUrls, thumbnailUrls]);
+  }, [detailUrls, model.history, thumbnailUrls]);
 
   useEffect(
     () =>
@@ -291,6 +367,7 @@ export function App() {
             dispatch({ type: "cameraResumed" });
           } else if (stream !== null) {
             streamRef.current = null;
+            nativePhotoRef.current = none;
             dispatch({ type: "cameraFailed", error: { tag: "streamEnded" } });
           }
         },
@@ -298,6 +375,7 @@ export function App() {
           switchTransactionRef.current += 1;
           stopStream(streamRef.current);
           streamRef.current = null;
+          nativePhotoRef.current = none;
           thumbnailUrls.revokeAll();
           detailUrls.revokeAll();
         },
@@ -316,6 +394,7 @@ export function App() {
         if (activeId.tag === "some" && !cameras.some((camera) => camera.id === activeId.value)) {
           stopStream(streamRef.current);
           streamRef.current = null;
+          nativePhotoRef.current = none;
           dispatch({ type: "cameraFailed", error: { tag: "streamEnded" } });
         }
       });
@@ -328,6 +407,7 @@ export function App() {
     () => () => {
       switchTransactionRef.current += 1;
       stopStream(streamRef.current);
+      nativePhotoRef.current = none;
       thumbnailUrls.revokeAll();
       detailUrls.revokeAll();
     },
@@ -354,6 +434,8 @@ export function App() {
           cameras={model.cameras}
           currentCamera={currentCamera}
           videoSettings={model.videoSettings.tag === "some" ? model.videoSettings.value : null}
+          photoCapability={model.photoCapability}
+          capturePreference={model.capturePreference}
           menuOpen={cameraMenuOpen}
           historyCount={model.history.length}
           latestThumbnailUrl={latestThumbnailUrl}
@@ -371,6 +453,9 @@ export function App() {
           onCloseMenu={() => setCameraMenuOpen(false)}
           onSelectCamera={(id) => void switchCamera(id)}
           onCapture={capture}
+          onCapturePreferenceChange={(preference) =>
+            dispatch({ type: "capturePreferenceChanged", preference })
+          }
           onQuickSwap={() => {
             const target = chooseQuickSwapTarget(model.cameras, currentId, model.previousCamera);
             if (target.tag === "some") void switchCamera(target.value);
@@ -443,7 +528,8 @@ export function App() {
         thumbnailUrl={(entry) =>
           entry.thumbnail.tag === "some" ? thumbnailUrls.get(entry.id, entry.thumbnail.value) : null
         }
-        detailUrl={(entry) => detailUrls.get(entry.id, entry.png)}
+        detailUrl={(entry) => detailUrls.get(entry.id, entry.blob)}
+        diagnostics={(entry) => captureDiagnostics.get(entry.id) ?? {}}
         onClose={() => {
           setHistoryOpen(false);
           setSelectedCapture(null);
@@ -480,4 +566,11 @@ function preflightMessage(): string | null {
   const context = document.createElement("canvas").getContext("2d");
   if (context === null) return "このブラウザでは画像を作成できません。";
   return null;
+}
+
+function withoutMapKey<K, V>(source: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> {
+  if (!source.has(key)) return source;
+  const next = new Map(source);
+  next.delete(key);
+  return next;
 }

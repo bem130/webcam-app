@@ -1,6 +1,14 @@
 import type { RefObject } from "preact";
 import { shouldMirrorPreview } from "../core/camera-selection";
-import type { CameraDescriptor, CameraId, CameraState, CameraVideoSettings } from "../core/model";
+import type {
+  CameraDescriptor,
+  CameraId,
+  CameraState,
+  CameraVideoSettings,
+  CapturePreference,
+  PhotoCapabilityState,
+  PhotoCaptureSettings,
+} from "../core/model";
 import { CameraIcon, ChevronIcon, SwapIcon } from "./icons";
 
 type CameraViewProps = Readonly<{
@@ -10,6 +18,8 @@ type CameraViewProps = Readonly<{
   cameras: readonly CameraDescriptor[];
   currentCamera: CameraDescriptor | null;
   videoSettings: CameraVideoSettings | null;
+  photoCapability: PhotoCapabilityState;
+  capturePreference: CapturePreference;
   menuOpen: boolean;
   historyCount: number;
   latestThumbnailUrl: string | null;
@@ -20,6 +30,7 @@ type CameraViewProps = Readonly<{
   onCloseMenu: () => void;
   onSelectCamera: (id: CameraId) => void;
   onCapture: () => void;
+  onCapturePreferenceChange: (preference: CapturePreference) => void;
   onQuickSwap: () => void;
   onOpenHistory: () => void;
 }>;
@@ -32,6 +43,8 @@ export function CameraView(props: CameraViewProps) {
     cameras,
     currentCamera,
     videoSettings,
+    photoCapability,
+    capturePreference,
     menuOpen,
     historyCount,
     latestThumbnailUrl,
@@ -42,11 +55,13 @@ export function CameraView(props: CameraViewProps) {
     onCloseMenu,
     onSelectCamera,
     onCapture,
+    onCapturePreferenceChange,
     onQuickSwap,
     onOpenHistory,
   } = props;
   const switching = cameraState.tag === "switching";
   const frontFacing = shouldMirrorPreview(currentCamera?.facing ?? "unknown");
+  const photoSettings = photoCapability.tag === "supported" ? photoCapability.settings : null;
 
   return (
     <section
@@ -72,6 +87,53 @@ export function CameraView(props: CameraViewProps) {
       />
       {!inactive && (
         <header class="camera-topbar">
+          <p class="camera-active material">
+            <span aria-hidden="true" />
+            カメラ使用中
+          </p>
+          {videoSettings !== null && (
+            <p
+              class="camera-quality material"
+              aria-label={qualityLabel(videoSettings, photoSettings)}
+            >
+              <span>{photoSettings === null ? "プレビュー / 撮影" : "プレビュー"}</span>
+              <strong>
+                {videoSettings.widthPx} × {videoSettings.heightPx}
+                {videoSettings.frameRate.tag === "none"
+                  ? ""
+                  : ` · ${formatFrameRate(videoSettings.frameRate.value)} fps`}
+              </strong>
+              {photoSettings !== null && (
+                <>
+                  <span>撮影 最大</span>
+                  <strong>
+                    {photoSettings.widthPx} × {photoSettings.heightPx}
+                  </strong>
+                </>
+              )}
+            </p>
+          )}
+          <label class="capture-preference material">
+            <span>撮影方式</span>
+            <select
+              aria-label="撮影方式"
+              value={photoCapability.tag === "supported" ? capturePreference : "videoFrame"}
+              onChange={(event) =>
+                onCapturePreferenceChange(
+                  event.currentTarget.value === "photoPreferred" ? "photoPreferred" : "videoFrame",
+                )
+              }
+            >
+              <option value="photoPreferred" disabled={photoCapability.tag !== "supported"}>
+                写真優先
+              </option>
+              <option value="videoFrame">動画フレーム</option>
+            </select>
+            {photoCapability.tag === "checking" && <small>写真APIを確認中です</small>}
+            {photoCapability.tag === "unsupported" && (
+              <small>このカメラでは写真APIを利用できません</small>
+            )}
+          </label>
           <div class="camera-menu-wrap">
             <button
               class="camera-selector material"
@@ -101,21 +163,6 @@ export function CameraView(props: CameraViewProps) {
               </div>
             )}
           </div>
-          <p class="camera-active material">
-            <span aria-hidden="true" />
-            カメラ使用中
-          </p>
-          {videoSettings !== null && (
-            <p class="camera-quality material" aria-label={qualityLabel(videoSettings)}>
-              <span>プレビュー / 撮影</span>
-              <strong>
-                {videoSettings.widthPx} × {videoSettings.heightPx}
-                {videoSettings.frameRate.tag === "none"
-                  ? ""
-                  : ` · ${formatFrameRate(videoSettings.frameRate.value)} fps`}
-              </strong>
-            </p>
-          )}
         </header>
       )}
 
@@ -183,8 +230,14 @@ function formatFrameRate(frameRate: number): string {
   return Number.isInteger(frameRate) ? String(frameRate) : frameRate.toFixed(1);
 }
 
-function qualityLabel(settings: CameraVideoSettings): string {
+function qualityLabel(
+  settings: CameraVideoSettings,
+  photoSettings: PhotoCaptureSettings | null,
+): string {
   const frameRate =
     settings.frameRate.tag === "none" ? "" : `、${formatFrameRate(settings.frameRate.value)} fps`;
-  return `プレビューと撮影の解像度 ${settings.widthPx} × ${settings.heightPx}${frameRate}`;
+  const preview = `プレビューの解像度 ${settings.widthPx} × ${settings.heightPx}${frameRate}`;
+  return photoSettings === null
+    ? `${preview}、撮影も同じ解像度`
+    : `${preview}、撮影の最大解像度 ${photoSettings.widthPx} × ${photoSettings.heightPx}`;
 }

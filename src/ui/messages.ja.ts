@@ -32,6 +32,13 @@ export function captureErrorMessage(error: CaptureError): string {
       return "このブラウザでは画像を作成できません。";
     case "pngEncodingFailed":
       return "画像を作成できませんでした。もう一度撮影してください。";
+    case "thumbnailEncodingFailed":
+      return "撮影画像のプレビューを作成できませんでした。";
+    case "photoCaptureFailed":
+      return "写真APIで撮影できませんでした。カメラを再開して試してください。";
+    case "invalidImage":
+    case "imageDecodeFailed":
+      return "カメラから返された画像を読み取れませんでした。";
     case "memoryAllocationFailed":
       return "画像を作成するためのメモリが不足しています。";
     default:

@@ -29,7 +29,7 @@ export function addCaptureThumbnail(
 export function historyByteLength(history: readonly CaptureEntry[]): number {
   return history.reduce(
     (total, entry) =>
-      total + entry.png.size + (entry.thumbnail.tag === "some" ? entry.thumbnail.value.size : 0),
+      total + entry.blob.size + (entry.thumbnail.tag === "some" ? entry.thumbnail.value.size : 0),
     0,
   );
 }
