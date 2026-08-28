@@ -31,6 +31,7 @@ describe("privacy contract", () => {
     const referrer = html.indexOf('name="referrer" content="no-referrer"');
     const resource = html.indexOf('<script type="module"');
     expect(csp).toBeGreaterThan(0);
+    expect(html).toContain("worker-src 'self'");
     expect(referrer).toBeGreaterThan(csp);
     expect(resource).toBeGreaterThan(referrer);
     expect(html).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>/i);

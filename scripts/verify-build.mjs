@@ -37,9 +37,27 @@ resourceUrls.forEach((url) =>
 );
 
 const javascriptFiles = readdirSync("dist/assets").filter((name) => name.endsWith(".js"));
-assert(javascriptFiles.length === 1, "expected one initial JavaScript bundle");
-const gzipBytes = gzipSync(readFileSync(`dist/assets/${javascriptFiles[0]}`)).byteLength;
+const initialJavascriptUrls = resourceUrls.filter((url) => url?.endsWith(".js") ?? false);
+assert(initialJavascriptUrls.length === 1, "expected one initial JavaScript bundle");
+const initialJavascript = initialJavascriptUrls[0]?.split("/").at(-1);
+assert(initialJavascript !== undefined, "initial JavaScript filename is missing");
+const workerFiles = javascriptFiles.filter((name) => name !== initialJavascript);
+assert(
+  workerFiles.length === 1 && workerFiles[0]?.startsWith("image-processing.worker-"),
+  "expected one generated image-processing worker bundle",
+);
+const initialSource = readFileSync(`dist/assets/${initialJavascript}`);
+const gzipBytes = gzipSync(initialSource).byteLength;
 assert(gzipBytes <= 80 * 1024, `initial JavaScript exceeds 80 KiB gzip: ${gzipBytes} bytes`);
+assert(
+  initialSource.includes(Buffer.from(workerFiles[0])),
+  "initial JavaScript does not reference the generated worker",
+);
+const workerGzipBytes = gzipSync(readFileSync(`dist/assets/${workerFiles[0]}`)).byteLength;
+assert(
+  workerGzipBytes <= 20 * 1024,
+  `worker JavaScript exceeds 20 KiB gzip: ${workerGzipBytes} bytes`,
+);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);

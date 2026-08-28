@@ -1,5 +1,11 @@
 import { useEffect, useRef } from "preact/hooks";
-import type { CaptureDiagnostics, CaptureEntry, CaptureId } from "../core/model";
+import {
+  browserClipboardDuration,
+  type CaptureDiagnostics,
+  type CaptureEntry,
+  type CaptureId,
+} from "../core/model";
+import type { Option } from "../core/result";
 import { CloseIcon, CopyIcon, TrashIcon } from "./icons";
 
 type HistoryPanelProps = Readonly<{
@@ -184,12 +190,22 @@ function CaptureDetail({
       <details class="capture-timing">
         <summary>端末内の処理時間</summary>
         <dl>
-          {TIMING_ROWS.map(([stage, label]) => (
+          {DURATION_ROWS.map(([stage, label]) => (
             <div key={stage}>
               <dt>{label}</dt>
-              <dd>{formatTiming(diagnostics[stage])}</dd>
+              <dd>{formatTiming(diagnostics.durations[stage])}</dd>
             </div>
           ))}
+          {MILESTONE_ROWS.map(([milestone, label]) => (
+            <div key={milestone}>
+              <dt>{label}</dt>
+              <dd>{formatTiming(diagnostics.milestones[milestone])}</dd>
+            </div>
+          ))}
+          <div>
+            <dt>Browser / OS Clipboard処理</dt>
+            <dd>{formatTiming(browserClipboardDuration(diagnostics))}</dd>
+          </div>
         </dl>
         <p class="capture-user-agent">{navigator.userAgent}</p>
       </details>
@@ -220,16 +236,20 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-const TIMING_ROWS = [
+const DURATION_ROWS = [
   ["sourceAcquisition", "写真取得"],
   ["videoFrameEncode", "動画フレームPNG"],
-  ["imageDecode", "画像寸法の確認"],
+  ["imageDecode", "画像decode / raster準備"],
   ["clipboardEncode", "Clipboard用PNG変換"],
   ["thumbnail", "サムネイル"],
-  ["clipboardSettle", "Clipboard完了"],
 ] as const;
 
-function formatTiming(value: CaptureDiagnostics[keyof CaptureDiagnostics]): string {
+const MILESTONE_ROWS = [
+  ["clipboardRepresentationReady", "Clipboard画像準備（撮影から）"],
+  ["clipboardSettled", "Clipboard完了（撮影から）"],
+] as const;
+
+function formatTiming(value: Option<number> | undefined): string {
   if (value === undefined) return "計測待ち";
   return value.tag === "none" ? "未実行" : `${Math.round(value.value)} ms`;
 }

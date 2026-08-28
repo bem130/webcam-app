@@ -21,6 +21,8 @@ Camera Clipboard は、写真APIまたはカメラの現在フレームから一
 
 native写真APIが返したencoded Blobは履歴用に再encodeせず保持します。Clipboardはbrowser間の互換性を優先して`image/png`を使うため、native形式がPNG以外の場合はClipboard用representationだけをPNGへ変換します。写真API非対応・capability取得失敗・撮影失敗時は、設定を書き換えずvideo frameへ静かにfallbackします。
 
+対応browserではnative画像をpersistent Dedicated Workerで一度だけdecodeし、`OffscreenCanvas`からClipboard用PNGと320 px thumbnailを作ります。Worker処理が利用できない、または失敗した場合はmain-thread Canvasへfallbackします。thumbnail encodeはClipboard処理後に開始し、history自体は先に追加されます。
+
 ## PWA install
 
 Production URLをHTTPSで開き、browser / OSの標準UIからinstallできます。

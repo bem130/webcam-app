@@ -300,7 +300,7 @@ sequenceDiagram
     participant UI
     participant Runtime
     participant Camera
-    participant Converter
+    participant Worker
     participant Clipboard
     User->>UI: shutterをactivate
     UI->>Runtime: captureAndCopy(preference)
@@ -308,10 +308,13 @@ sequenceDiagram
     Runtime->>Clipboard: write(ClipboardItem(PNG representation Promise))
     Note over Runtime,Clipboard: awaitより前に呼ぶ
     Camera-->>Runtime: native Blobまたはvideo-frame PNG
+    Runtime->>Worker: native Blobをdecode once
+    Worker-->>Runtime: dimensions + prepared rasters
     Runtime-->>UI: native artifactをhistoryへ追加
-    Runtime->>Converter: 必要な場合だけClipboard用PNGへ変換
-    Converter-->>Clipboard: PNG representation
+    Worker-->>Clipboard: 必要な場合だけPNG representation
     Clipboard-->>Runtime: copy success / failure
+    Runtime->>Worker: Clipboard settlement後にthumbnail encode
+    Worker-->>UI: 320 px thumbnail
     Runtime-->>UI: typed outcome
 ```
 
@@ -332,13 +335,13 @@ function captureAndCopy(
 
   return {
     captured: observeCapture(captured),
-    thumbnail: observeThumbnail(captured),
+    thumbnail: observeThumbnailAfterClipboard(captured, clipboardPng, clipboard),
     clipboard: observeClipboard(clipboard),
   };
 }
 ```
 
-この関数の呼出しと`clipboard.write()`の間へ`await`、`queueMicrotask`、`setTimeout`、component effectを挟まない。`captured`、`thumbnail`、`clipboard`は独立してsettleする。native Blobまたはvideo-frame PNG完成直後にhistoryへ追加してcapture busyを解除し、thumbnail、Clipboard用PNG変換、Clipboard settlementを待たない。capture失敗後にClipboard resultが到着してもcapture errorを上書きしない。
+この関数の呼出しと`clipboard.write()`の間へ`await`、`queueMicrotask`、`setTimeout`、component effectを挟まない。`captured`、`thumbnail`、`clipboard`は独立してsettleする。native Blobまたはvideo-frame PNG完成直後にhistoryへ追加してcapture busyを解除し、thumbnail、Clipboard用PNG変換、Clipboard settlementを待たない。thumbnail encodeだけはbrowser / OS Clipboard処理とのCPU・memory bandwidth競合を避けるため、Clipboard representationとwriteの両方がsettleした後に開始する。capture失敗後にClipboard resultが到着してもcapture errorを上書きしない。
 
 ## 8. Technical architecture
 
@@ -561,12 +564,16 @@ PNGはcapture domainの固定形式ではなくClipboard互換representationと�
 
 ### 10.2 Encode
 
-- 一つのreusable off-DOM canvasを用いる。
+- native stillはapplication起動時に作るpersistent Dedicated Workerへ渡し、`createImageBitmap()`によるfull-resolution decodeを一回に集約する。
+- 一つのdecoded imageから実dimensions、portable PNG用full-size `OffscreenCanvas`、320 px thumbnail用small `OffscreenCanvas`を準備し、直ちに`ImageBitmap.close()`する。
+- Workerの2D contextはopaque camera imageとして`{ alpha: false }`を指定し、`willReadFrequently`は既定で使わない。
+- WorkerまたはOffscreenCanvasが利用不能・失敗した場合は、同じdecode-once contractを持つmain-thread Canvas adapterへ一度fallbackする。
 - source dimensionsを検証し、capture artifactには同じdimensionsを使う。thumbnailだけはlong edge 320 pxへ縮小する。
 - front previewのCSS transformをCanvasへ適用しない。
-- `drawImage(video, 0, 0, width, height)`後に`canvas.toBlob(..., "image/png")`を呼ぶ。
+- video-frame routeは`drawImage(video, 0, 0, width, height)`後に`canvas.toBlob(..., "image/png")`を呼ぶ。
 - `toBlob`が`null`を返した場合は`pngEncodingFailed`とする。
-- capture artifact完成後に320 px square以内のJPEG thumbnailを別canvasで生成する。thumbnailはUI専用でありClipboardには使わない。
+- capture artifact完成時はpending thumbnailのままhistoryへ追加し、Clipboard settlement後に320 px square以内のJPEG thumbnailを生成・更新する。thumbnailはUI専用でありClipboardには使わない。
+- full-size canvasはPNG完成後に1×1へ縮小し、Clipboard settlementまで保持するのは320 px raster相当だけにする。
 - 一時`ImageBitmap`を用いた場合は必ず`close()`する。
 
 ## 11. In-memory history and resource management
@@ -685,12 +692,13 @@ GitHub Pagesではrepositoryから任意のHTTP response headerを設定でき�
 ```html
 <meta
   http-equiv="Content-Security-Policy"
-  content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+  content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
 >
 <meta name="referrer" content="no-referrer">
 ```
 
 - production bundleにinline scriptとinline event handlerを含めない。
+- image processing WorkerはViteが生成したsame-origin module assetだけを初期loadし、Blob Workerや外部Workerを使わない。
 - 外部font、CDN script、analytics、remote error reporterを使わない。
 - `connect-src 'none'`を維持できない追加機能はprivacy contractの変更として別途reviewする。
 - CSP `meta`は、それより前に現れるresourceへ適用されないため、document先頭に置く。
@@ -742,15 +750,15 @@ Clipboard APIはbrowser間でpermission modelとuser activationの扱いが異�
 | --- | --- |
 | NFR-01 | production JavaScript initial transferをgzip 80 KiB以下に保つことを目標とする。 |
 | NFR-02 | camera permission許可からfirst live frameまで、device依存時間を除くapplication overheadを100 ms以下にする。 |
-| NFR-03 | shutterからhistory追加までをactual route・dimensions別に計測し、source acquisition、video-frame PNG、image decode、Clipboard用PNG変換、thumbnail、Clipboard settlementを端末内で分離表示する。 |
+| NFR-03 | stage durationは`durationMs`、Clipboard representation ready / settledはshutter originの`offsetFromShutterMs`として別型で計測する。browser / OS Clipboard時間は後者二つの順序付き差分だけから導出する。 |
 | NFR-04 | copy処理中のlong taskを50 ms未満へ分割し、UI feedbackを先にpaint可能にする。 |
 | NFR-05 | history gridでoriginal capture artifactをdecodeせずthumbnailを使う。 |
 | NFR-06 | background時にvideo trackをdisableし、不要なcamera使用と電力消費を抑える。 |
 | NFR-07 | layout shiftによりshutter位置を変化させない。 |
 
-Android実測では3000×4000 video-frame PNGが約10秒、2448×3264が約2秒だった。画素数だけで原因を確定せず、上記stage timingでnative artifact完成とClipboard互換変換を分離して評価する。Phase 3では最大previewを維持し、解像度ceilingやauto adaptive routeは導入しない。
+Android実測では3000×4000 video-frame PNGが約10秒、2448×3264が約2秒、3000×4000 native still routeが約3秒だった。画素数だけで原因を確定せず、上記duration / milestone timingでnative artifact、Clipboard互換変換、browser / OS Clipboard処理を分離して評価する。Phase 3.5でも最大previewを維持し、解像度ceilingやauto adaptive routeは導入しない。
 
-PNG encodeがmain threadを長く占有するbrowserでは、OffscreenCanvasのsupportを検査してworker encodeを将来導入できるよう`CaptureEncoder` boundaryを保つ。ただしSafariのClipboard user activationを維持するため、Clipboard write開始自体はUI event handler内に残す。
+native image processingはsupport検査後にpersistent Worker + `OffscreenCanvas.convertToBlob()`で実行し、unsupported / failure時はmain-thread Canvasへfallbackする。ただしSafariのClipboard user activationを維持するため、Clipboard write開始自体はUI event handler内に残す。ChromiumでWorker encode schedulingが異なることは性能上の根拠であり、correctness contractにはしない。
 
 ## 17. Testing strategy
 
@@ -888,6 +896,10 @@ v1は次をすべて満たした時点で完成とする。
 - [MDN: MediaDevices.enumerateDevices()](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/enumerateDevices)
 - [MDN: MediaTrackConstraints.facingMode](https://developer.mozilla.org/en-US/docs/Web/API/MediaTrackConstraints/facingMode)
 - [MDN: Clipboard.write()](https://developer.mozilla.org/en-US/docs/Web/API/Clipboard/write)
+- [MDN: OffscreenCanvas.convertToBlob()](https://developer.mozilla.org/en-US/docs/Web/API/OffscreenCanvas/convertToBlob)
+- [MDN: OffscreenCanvas.getContext()](https://developer.mozilla.org/en-US/docs/Web/API/OffscreenCanvas/getContext)
+- [Chromium: Canvas async Blob creator](https://chromium.googlesource.com/chromium/src/third_party/+/master/blink/renderer/core/html/canvas/canvas_async_blob_creator.cc)
+- [Chromium: Android Clipboard bitmap writer](https://chromium.googlesource.com/chromium/src/+/e40dc1e2c83b02f4a41cd2cb88c0abad32c60ca5/ui/base/clipboard/clipboard_android.cc)
 - [WebKit: Async Clipboard API](https://webkit.org/blog/10855/async-clipboard-api/)
 - [W3C: Media Capture and Streams](https://www.w3.org/TR/mediacapture-streams/)
 - [WCAG 2.2: Contrast Minimum](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html)

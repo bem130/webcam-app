@@ -36,7 +36,8 @@
 - [ ] 写真API非対応cameraでは「写真優先」がdisabledになり、video-frame captureが完全に利用できる。
 - [ ] 写真API失敗時は通常UIを不要なwarningで塞がずvideo frameへfallbackし、history detailsでactual routeを確認できる。
 - [ ] native JPEG等はhistoryでnative MIMEを維持し、ClipboardへはPNGとして実際にpasteできる。
-- [ ] 3000×4000と2448×3264を含むAndroid実機でstage timingを記録し、native artifact完成、Clipboard用PNG変換、thumbnail、Clipboard完了を区別できる。
+- [ ] 3000×4000と2448×3264を含むAndroid実機でstage durationとshutter-relative milestoneを記録し、native artifact、Clipboard用PNG変換、representation ready、browser / OS Clipboard処理、thumbnailを区別できる。
+- [ ] 3000×4000 native still routeの約3秒という変更前baselineと同じcamera・解像度で比較し、Worker route / fallback routeと各stageを記録する。
 - [ ] copy の成功・失敗が text と screen reader live region で判別できる。
 - [ ] Clipboard permission を拒否しても画像が履歴へ残り、「再コピー」が動作する。
 - [ ] camera が一台のとき quick swap が表示されない。

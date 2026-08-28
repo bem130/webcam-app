@@ -3,12 +3,20 @@ import { causeName } from "../core/errors";
 import type {
   CapturePreference,
   CaptureRoute,
+  CaptureTimingDurationStage,
   CaptureTimingMeasurement,
+  CaptureTimingMilestone,
   ImageMimeType,
 } from "../core/model";
 import type { Option, Result } from "../core/result";
 import { err, none, ok, some } from "../core/result";
 import { beginPngWrite, browserClipboardPort, type ClipboardPort, PNG_MIME } from "./clipboard";
+import {
+  CanvasImageProcessingPort,
+  isImageProcessingFailure,
+  type EncodedClipboardPng,
+  type ImageProcessingPort,
+} from "./image-processing";
 import type { NativePhotoCapture } from "./native-photo";
 
 export type Dimensions = Readonly<{ width: number; height: number }>;
@@ -37,6 +45,7 @@ export type CaptureEncoder = Readonly<{
 
 export type CaptureDependencies = Readonly<{
   encoder?: CaptureEncoder;
+  imageProcessing?: ImageProcessingPort;
   clipboardPort?: ClipboardPort;
   nativePhoto?: Option<NativePhotoCapture>;
   preference?: CapturePreference;
@@ -176,37 +185,47 @@ export function beginCaptureAndCopy(
   dependencies: CaptureDependencies = {},
 ): CaptureOperation {
   const encoder = dependencies.encoder ?? new CanvasCaptureEncoder();
+  const imageProcessing = dependencies.imageProcessing ?? new CanvasImageProcessingPort();
   const clipboardPort = dependencies.clipboardPort ?? browserClipboardPort();
   const nativePhoto = dependencies.nativePhoto ?? none;
   const preference = dependencies.preference ?? "photoPreferred";
   const clock = dependencies.clock ?? defaultClock;
   const observeTiming = dependencies.observeTiming ?? ignoreTiming;
 
-  const image = captureImage(video, encoder, nativePhoto, preference, clock, observeTiming);
-  const captured = image.then(
-    (value) => ok(value),
+  const shutterStartedAt = clock();
+  const source = captureSource(
+    video,
+    encoder,
+    imageProcessing,
+    nativePhoto,
+    preference,
+    clock,
+    observeTiming,
+  );
+  const captured = source.then(
+    (value) => ok(value.image),
     (cause: unknown) => err(captureErrorFrom(cause)),
   );
-  const clipboardPng = compatibleClipboardPng(image, encoder, clock, observeTiming);
+  const clipboardPng = compatibleClipboardPng(source, clock, shutterStartedAt, observeTiming);
   // Some fake Clipboard adapters do not observe their ClipboardItem promise.
   void clipboardPng.catch(() => undefined);
-  const clipboardStartedAt = clock();
   // Keep this synchronous with the shutter handler for WebKit user activation.
   const clipboard = beginPngWrite(clipboardPng, clipboardPort).then((result) => {
-    recordTiming(observeTiming, "clipboardSettle", some(elapsed(clock, clipboardStartedAt)));
+    recordMilestone(observeTiming, "clipboardSettled", some(elapsed(clock, shutterStartedAt)));
     return result;
   });
   const clipboardRepresentationSettled = clipboardPng.then(
     () => undefined,
     () => undefined,
   );
-  const thumbnail = Promise.all([image, clipboardRepresentationSettled])
+  const thumbnail = Promise.all([source, clipboard, clipboardRepresentationSettled])
     .then(async ([value]) => {
       const thumbnailStartedAt = clock();
       try {
-        return await encoder.encodeThumbnail(value.blob);
+        return await value.encodeThumbnail();
       } finally {
-        recordTiming(observeTiming, "thumbnail", some(elapsed(clock, thumbnailStartedAt)));
+        value.dispose();
+        recordDuration(observeTiming, "thumbnail", some(elapsed(clock, thumbnailStartedAt)));
       }
     })
     .then(
@@ -219,23 +238,46 @@ export function beginCaptureAndCopy(
 
 export function beginCapturedImageCopy(
   image: Pick<CapturedImage, "blob" | "mimeType">,
-  encoder: CaptureEncoder = new CanvasCaptureEncoder(),
-  clipboardPort: ClipboardPort = browserClipboardPort(),
+  dependencies: Readonly<{
+    encoder?: CaptureEncoder;
+    imageProcessing?: ImageProcessingPort;
+    clipboardPort?: ClipboardPort;
+  }> = {},
 ): Promise<Result<void, ClipboardError>> {
+  const encoder = dependencies.encoder ?? new CanvasCaptureEncoder();
+  const clipboardPort = dependencies.clipboardPort ?? browserClipboardPort();
   const png =
-    image.mimeType === PNG_MIME ? Promise.resolve(image.blob) : encoder.encodeBlobPng(image.blob);
+    image.mimeType === PNG_MIME
+      ? Promise.resolve(image.blob)
+      : dependencies.imageProcessing === undefined
+        ? encoder.encodeBlobPng(image.blob)
+        : dependencies.imageProcessing.prepare(image.blob, true).then(async (prepared) => {
+            try {
+              return (await prepared.clipboardPng).blob;
+            } finally {
+              prepared.dispose();
+            }
+          });
   void png.catch(() => undefined);
   return beginPngWrite(png, clipboardPort);
 }
 
-async function captureImage(
+type CaptureSource = Readonly<{
+  image: CapturedImage;
+  clipboardPng: Promise<EncodedClipboardPng>;
+  encodeThumbnail: () => Promise<Blob>;
+  dispose: () => void;
+}>;
+
+async function captureSource(
   video: HTMLVideoElement,
   encoder: CaptureEncoder,
+  imageProcessing: ImageProcessingPort,
   nativePhoto: Option<NativePhotoCapture>,
   preference: CapturePreference,
   clock: () => number,
   observeTiming: (measurement: CaptureTimingMeasurement) => void,
-): Promise<CapturedImage> {
+): Promise<CaptureSource> {
   if (preference === "videoFrame" || nativePhoto.tag === "none") {
     return captureVideoFrame(video, encoder, clock, observeTiming);
   }
@@ -245,28 +287,33 @@ async function captureImage(
   try {
     nativeBlob = await nativePhoto.value.takePhoto();
   } catch {
-    recordTiming(observeTiming, "sourceAcquisition", some(elapsed(clock, sourceStartedAt)));
+    recordDuration(observeTiming, "sourceAcquisition", some(elapsed(clock, sourceStartedAt)));
     if (nativePhoto.value.track.readyState !== "live") {
       throw taggedCaptureError({ tag: "photoCaptureFailed" });
     }
     return captureVideoFrame(video, encoder, clock, observeTiming);
   }
-  recordTiming(observeTiming, "sourceAcquisition", some(elapsed(clock, sourceStartedAt)));
+  recordDuration(observeTiming, "sourceAcquisition", some(elapsed(clock, sourceStartedAt)));
 
   try {
     const mimeType = imageMimeType(nativeBlob);
     const decodeStartedAt = clock();
     try {
-      const dimensions = await encoder.inspectImage(nativeBlob);
+      const prepared = await imageProcessing.prepare(nativeBlob, mimeType !== PNG_MIME);
       return {
-        blob: nativeBlob,
-        mimeType,
-        width: dimensions.width,
-        height: dimensions.height,
-        route: "photo",
+        image: {
+          blob: nativeBlob,
+          mimeType,
+          width: prepared.dimensions.width,
+          height: prepared.dimensions.height,
+          route: "photo",
+        },
+        clipboardPng: prepared.clipboardPng,
+        encodeThumbnail: prepared.encodeThumbnail,
+        dispose: prepared.dispose,
       };
     } finally {
-      recordTiming(observeTiming, "imageDecode", some(elapsed(clock, decodeStartedAt)));
+      recordDuration(observeTiming, "imageDecode", some(elapsed(clock, decodeStartedAt)));
     }
   } catch (cause) {
     if (nativePhoto.value.track.readyState !== "live") throw cause;
@@ -279,40 +326,56 @@ async function captureVideoFrame(
   encoder: CaptureEncoder,
   clock: () => number,
   observeTiming: (measurement: CaptureTimingMeasurement) => void,
-): Promise<CapturedImage> {
+): Promise<CaptureSource> {
   const startedAt = clock();
   try {
     const image = await encoder.encodeVideoFramePng(video);
-    return {
+    const capturedImage = {
       blob: image.blob,
       mimeType: imageMimeType(image.blob),
       width: image.width,
       height: image.height,
-      route: "videoFrame",
+      route: "videoFrame" as const,
+    };
+    return {
+      image: capturedImage,
+      clipboardPng: Promise.resolve({ blob: image.blob, durationMs: 0 }),
+      encodeThumbnail: () => encoder.encodeThumbnail(image.blob),
+      dispose: () => undefined,
     };
   } finally {
-    recordTiming(observeTiming, "videoFrameEncode", some(elapsed(clock, startedAt)));
+    recordDuration(observeTiming, "videoFrameEncode", some(elapsed(clock, startedAt)));
   }
 }
 
 function compatibleClipboardPng(
-  image: Promise<CapturedImage>,
-  encoder: CaptureEncoder,
+  source: Promise<CaptureSource>,
   clock: () => number,
+  shutterStartedAt: number,
   observeTiming: (measurement: CaptureTimingMeasurement) => void,
 ): Promise<Blob> {
-  return image.then(async (value) => {
-    if (value.mimeType === PNG_MIME) {
-      recordTiming(observeTiming, "clipboardEncode", none);
-      return value.blob;
+  return source.then(async (value) => {
+    if (value.image.mimeType === PNG_MIME) {
+      recordDuration(observeTiming, "clipboardEncode", none);
+    } else {
+      const representation = await representationReady(value.clipboardPng);
+      recordDuration(observeTiming, "clipboardEncode", some(representation.durationMs));
+      return representation.blob;
     }
-    const startedAt = clock();
-    try {
-      return await encoder.encodeBlobPng(value.blob);
-    } finally {
-      recordTiming(observeTiming, "clipboardEncode", some(elapsed(clock, startedAt)));
-    }
+    return (await representationReady(value.clipboardPng)).blob;
   });
+
+  async function representationReady(
+    png: Promise<EncodedClipboardPng>,
+  ): Promise<EncodedClipboardPng> {
+    const value = await png;
+    recordMilestone(
+      observeTiming,
+      "clipboardRepresentationReady",
+      some(elapsed(clock, shutterStartedAt)),
+    );
+    return value;
+  }
 }
 
 export function sourceDimensions(sourceWidth: number, sourceHeight: number): Dimensions {
@@ -372,6 +435,7 @@ const isTaggedCaptureError = (cause: unknown): cause is TaggedCaptureError =>
   cause instanceof TaggedCaptureError;
 
 function captureErrorFrom(cause: unknown): CaptureError {
+  if (isImageProcessingFailure(cause)) return cause.error;
   return isTaggedCaptureError(cause) ? cause.error : mapEncodeFailure(cause);
 }
 
@@ -389,13 +453,25 @@ function elapsed(clock: () => number, startedAt: number): number {
   return Math.max(0, clock() - startedAt);
 }
 
-function recordTiming(
+function recordDuration(
   observer: (measurement: CaptureTimingMeasurement) => void,
-  stage: CaptureTimingMeasurement["stage"],
-  elapsedMs: Option<number>,
+  stage: CaptureTimingDurationStage,
+  durationMs: Option<number>,
 ): void {
   try {
-    observer({ stage, elapsedMs });
+    observer({ kind: "duration", stage, durationMs });
+  } catch {
+    // Diagnostics must never change capture behavior.
+  }
+}
+
+function recordMilestone(
+  observer: (measurement: CaptureTimingMeasurement) => void,
+  milestone: CaptureTimingMilestone,
+  offsetFromShutterMs: Option<number>,
+): void {
+  try {
+    observer({ kind: "milestone", milestone, offsetFromShutterMs });
   } catch {
     // Diagnostics must never change capture behavior.
   }

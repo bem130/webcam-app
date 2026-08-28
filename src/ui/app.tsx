@@ -13,6 +13,7 @@ import type { CameraError } from "../core/errors";
 import { historyByteLength, MEMORY_WARNING_BYTES } from "../core/history";
 import {
   captureId,
+  emptyCaptureDiagnostics,
   initialModel,
   type CameraId,
   type CaptureDiagnostics,
@@ -32,6 +33,7 @@ import {
 } from "../platform/camera";
 import { beginCaptureAndCopy, beginCapturedImageCopy } from "../platform/capture";
 import { PNG_MIME } from "../platform/clipboard";
+import { browserImageProcessingPort } from "../platform/image-processing";
 import { bindDocumentLifecycle } from "../platform/lifecycle";
 import { ObjectUrlRegistry } from "../platform/object-url-registry";
 import { AppOverlayPlane } from "./app-overlay-plane";
@@ -66,6 +68,7 @@ export function App() {
   const switchTransactionRef = useRef(0);
   const thumbnailUrls = useMemo(() => new ObjectUrlRegistry(), []);
   const detailUrls = useMemo(() => new ObjectUrlRegistry(), []);
+  const imageProcessing = useMemo(() => browserImageProcessingPort(), []);
   const capabilityMessage = preflightMessage();
 
   const discoverPhotoCapabilities = useCallback((stream: MediaStream) => {
@@ -235,16 +238,32 @@ export function App() {
     dispatch({ type: "copyStarted", captureId: id });
     const capturePreference = model.capturePreference;
     const operation = beginCaptureAndCopy(video, {
+      imageProcessing,
       nativePhoto: nativePhotoRef.current,
       preference: capturePreference,
       observeTiming: (measurement) => {
         if (ignoredDiagnosticsRef.current.has(id)) return;
         setCaptureDiagnostics((current) => {
           const next = new Map(current);
-          next.set(id, {
-            ...(current.get(id) ?? {}),
-            [measurement.stage]: measurement.elapsedMs,
-          });
+          const diagnostics = current.get(id) ?? emptyCaptureDiagnostics;
+          next.set(
+            id,
+            measurement.kind === "duration"
+              ? {
+                  ...diagnostics,
+                  durations: {
+                    ...diagnostics.durations,
+                    [measurement.stage]: measurement.durationMs,
+                  },
+                }
+              : {
+                  ...diagnostics,
+                  milestones: {
+                    ...diagnostics.milestones,
+                    [measurement.milestone]: measurement.offsetFromShutterMs,
+                  },
+                },
+          );
           return next;
         });
       },
@@ -254,18 +273,24 @@ export function App() {
         case "captureSucceeded": {
           setCaptureDiagnostics((current) => {
             const next = new Map(current);
-            const diagnostics = current.get(id) ?? {};
+            const diagnostics = current.get(id) ?? emptyCaptureDiagnostics;
             next.set(
               id,
               event.image.route === "photo"
                 ? {
                     ...diagnostics,
-                    videoFrameEncode: diagnostics.videoFrameEncode ?? none,
+                    durations: {
+                      ...diagnostics.durations,
+                      videoFrameEncode: diagnostics.durations.videoFrameEncode ?? none,
+                    },
                   }
                 : {
                     ...diagnostics,
-                    sourceAcquisition: diagnostics.sourceAcquisition ?? none,
-                    imageDecode: diagnostics.imageDecode ?? none,
+                    durations: {
+                      ...diagnostics.durations,
+                      sourceAcquisition: diagnostics.durations.sourceAcquisition ?? none,
+                      imageDecode: diagnostics.durations.imageDecode ?? none,
+                    },
                   },
             );
             return next;
@@ -311,21 +336,27 @@ export function App() {
           break;
       }
     });
-  }, [captureBusy, model.camera, model.capturePreference]);
+  }, [captureBusy, imageProcessing, model.camera, model.capturePreference]);
 
-  const recopy = useCallback((entry: CaptureEntry) => {
-    dispatch({ type: "copyStarted", captureId: entry.id });
-    const write = beginCapturedImageCopy({ blob: entry.blob, mimeType: entry.mimeType });
-    void write.then((result) => {
-      if (result.tag === "ok") {
-        dispatch({ type: "copySucceeded", captureId: entry.id });
-        setFeedback({ tone: "success", text: "Clipboardに再コピーしました。" });
-      } else {
-        dispatch({ type: "copyFailed", captureId: entry.id, error: result.error });
-        setFeedback({ tone: "error", text: clipboardErrorMessage(result.error) });
-      }
-    });
-  }, []);
+  const recopy = useCallback(
+    (entry: CaptureEntry) => {
+      dispatch({ type: "copyStarted", captureId: entry.id });
+      const write = beginCapturedImageCopy(
+        { blob: entry.blob, mimeType: entry.mimeType },
+        { imageProcessing },
+      );
+      void write.then((result) => {
+        if (result.tag === "ok") {
+          dispatch({ type: "copySucceeded", captureId: entry.id });
+          setFeedback({ tone: "success", text: "Clipboardに再コピーしました。" });
+        } else {
+          dispatch({ type: "copyFailed", captureId: entry.id, error: result.error });
+          setFeedback({ tone: "error", text: clipboardErrorMessage(result.error) });
+        }
+      });
+    },
+    [imageProcessing],
+  );
 
   const deleteCapture = useCallback(
     (id: CaptureId) => {
@@ -408,10 +439,11 @@ export function App() {
       switchTransactionRef.current += 1;
       stopStream(streamRef.current);
       nativePhotoRef.current = none;
+      imageProcessing.dispose();
       thumbnailUrls.revokeAll();
       detailUrls.revokeAll();
     },
-    [detailUrls, thumbnailUrls],
+    [detailUrls, imageProcessing, thumbnailUrls],
   );
 
   const latest = model.history[0];
@@ -529,7 +561,7 @@ export function App() {
           entry.thumbnail.tag === "some" ? thumbnailUrls.get(entry.id, entry.thumbnail.value) : null
         }
         detailUrl={(entry) => detailUrls.get(entry.id, entry.blob)}
-        diagnostics={(entry) => captureDiagnostics.get(entry.id) ?? {}}
+        diagnostics={(entry) => captureDiagnostics.get(entry.id) ?? emptyCaptureDiagnostics}
         onClose={() => {
           setHistoryOpen(false);
           setSelectedCapture(null);
