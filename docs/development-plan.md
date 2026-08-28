@@ -3,8 +3,8 @@
 | 項目           | 内容                                   |
 | -------------- | -------------------------------------- |
 | 文書状態       | V2実装計画                             |
-| Version        | 2.0                                    |
-| 更新日         | 2026-08-28                             |
+| Version        | 2.1                                    |
+| 更新日         | 2026-08-29                             |
 | 対象branch     | `main`                                 |
 | Production URL | `https://bem130.github.io/webcam-app/` |
 
@@ -16,15 +16,16 @@
 | ----: | --------------------------------------------------------------- | ---------------- |
 |     1 | PWA installation                                                | 完了 (`4d2ef2b`) |
 |     2 | Full-resolution video-frame capture + resolution display        | 完了 (`14339ac`) |
-|   2.5 | Architecture and repository verification gates                  | 完了             |
-|     3 | Native still capture via `ImageCapture` progressive enhancement | 未着手           |
+|   2.5 | Architecture and repository verification gates                  | 完了 (`ac16b78`) |
+|     3 | Native still capture via `ImageCapture` progressive enhancement | 完了 (`8b0a83a`) |
+|   3.5 | Capture pipeline measurement and worker optimization            | 未着手           |
 |     4 | Idle timeout core + hard camera suspend                         | 未着手           |
 |     5 | Screensaver + interaction-based resume                          | 未着手           |
 |     6 | Preferences (idle timeout + capture mode)                       | 未着手           |
 |     7 | Acceptance automation + high-resolution memory hardening        | 未着手           |
 |     8 | Documentation + release hardening                               | 未着手           |
 
-各phaseは単独でbuild・test・deploy可能な状態で完了させる。複数phaseを一つのcommitへまとめず、phaseごとに実装、検証、diff review、commit、pushを行う。Phase 3の`ImageCapture`が利用できない環境でも、Phase 2のvideo-frame captureだけで完全に利用可能な状態を保つ。
+各phaseは単独でbuild・test・deploy可能な状態で完了させる。複数phaseを一つのcommitへまとめず、phaseごとに実装、検証、diff review、commit、pushを行う。Phase 3の`ImageCapture`が利用できない環境でも、Phase 2のvideo-frame captureだけで完全に利用可能な状態を保つ。Phase 3.5は実機で顕在化したcapture / Clipboard latencyをPhase 4より先に扱い、Phase 4以降のidle lifecycleへ重い画像処理を持ち越さない。
 
 V2開発完了までは、本書をV2変更事項のnormative specificationとする。`docs/design.md`または既存実装と競合する場合は本書を優先し、各phaseで該当する`design.md` contractもincrementalに同期する。
 
@@ -286,6 +287,70 @@ type CaptureRoute = "photo" | "videoFrame";
 
 `feat: complete phase 3 native still capture`
 
+## 5.5 Phase 3.5: Capture pipeline measurement and worker optimization
+
+Phase 3のnative still routeではnative encoded Blobをhistory artifactとして保持できたが、portable Clipboard representation、dimensions検査、thumbnailのために同じfull-resolution imageを複数回decodeし得る。さらに`navigator.clipboard.write()`のsettlementには、applicationがrepresentationを用意する時間とbrowser / OS側の処理時間が含まれる。両者を分離して計測したうえで、Web APIの範囲内で重複処理とmain-thread負荷を削減する。
+
+Chromium sourceで観測されるPNG decode、Android system Clipboard用PNG再encode、main-thread canvasのidle-task schedulingはtarget browserの重要な実装根拠だが、Web標準の保証ではない。Chromium固有の挙動へcapture correctnessを依存させず、feature detection、既存Canvas adapterへのfallback、実機比較を必須とする。
+
+### Timing contract
+
+- shutterを共通originとし、applicationのportable representation完成時点を`clipboardRepresentationReady`、`navigator.clipboard.write()` settlementを`clipboardSettle`として別々に記録する。
+- representation完成後にClipboardがsettleする場合だけ、`browserClipboard = clipboardSettle - clipboardRepresentationReady`をderived timingとして表示する。representation完成前にwriteがrejectした場合は`Option.none`とし、負数を丸めてbrowser時間として報告しない。
+- 既存のsource acquisition、image decode、video-frame encode、Clipboard互換encode、thumbnail timingを維持し、routeごとに未実行stageを`Option.none`で表す。
+- timingはlocal memory / details表示だけに保持し、network送信、永続化、自動route選択へ使用しない。
+- Android実機の暫定観測として、3000×4000 video-frame PNGは約10秒、2448×3264 video-frame PNGは約2秒、3000×4000 native still routeは約3秒を比較baselineにする。ただし自動testの固定性能閾値にはしない。
+
+### Decode-once image processing
+
+- native still Blobはplatform image-processing transactionへ一度だけ渡し、full-resolution decodeを一回に集約する。
+- 一つのdecoded imageから実dimensions、portable PNG用full-size canvas、320 px thumbnail用small canvasを準備し、`ImageBitmap.close()`を必ず呼ぶ。
+- full-size PNG完成後はfull canvasのbacking storeを直ちに縮小 / 解放する。thumbnail側に保持してよいのは320 px raster相当だけとし、full decoded imageをClipboard settlementまで保持しない。
+- history artifactはnative Blobと実dimensionsが確定した時点で追加し、thumbnailを`pending | ready | failed`として別transitionで更新できるmodelにする。thumbnail failureでcapture成功を取り消さない。
+- thumbnail encodeはClipboardのsuccess / failure settlement後に開始し、browser-side Clipboard処理とfull-image decode / encodeがCPU・memory bandwidthを競合しないようにする。Clipboard failureでもthumbnail処理は開始する。
+
+### Persistent worker adapter
+
+- application起動時に同一originのDedicated Workerを一つだけ準備し、captureごとのworker生成・module compileをcritical pathへ入れない。
+- Workerでは`createImageBitmap()`による単一decodeと`OffscreenCanvas.convertToBlob()`によるPNG / JPEG encodeを行う。2D contextはcamera imageがopaqueであることを`{ alpha: false }`で宣言する。
+- `willReadFrequently`は`getImageData()`中心のworkloadではないためdefaultで有効化しない。採否は別の端末A/B benchmarkで判断する。
+- main threadとWorkerのmessage protocolはtransaction IDとdiscriminated unionを使い、concurrent capture、stale response、worker error、terminationをtypedに扱う。
+- `Worker`、`OffscreenCanvas`、`convertToBlob()`、worker内`createImageBitmap()`のいずれかが利用不能、初期化失敗、decode / encode rejection、worker crashとなった場合は既存main-thread Canvas adapterへ一度fallbackする。
+- fallbackしてもcapture route、history native artifact、Clipboard user activation、camera lifetimeの契約を変えない。performance optimization failureをcapture failureと混同しない。
+- worker scriptはapplication codeと同じoriginから初期loadし、capture Blobをrequest body、URL、persistent storageへ変換しない。`connect-src 'none'`、Service Workerなし、capture操作後のno-network contractを維持する。
+
+### Resource and lifecycle contract
+
+- Clipboard writeは従来どおり最初の`await`より前に`Promise<Blob>` representationで開始する。
+- source artifact completion、history追加、camera source releaseはWorker encode、thumbnail、Clipboard settlementを待たない。
+- Clipboard representation ready、Clipboard settlement、thumbnail settlementは独立observerで更新し、いずれの順序でもcapture successを巻き戻さない。
+- worker内のjob resourceはsuccess、failure、fallback、component unmountの全経路で破棄する。pending jobを無期限にMapへ保持しない。
+- video-frame routeもWorker化の対象にできるが、Phase 3.5の第一対象はnative Blobの重複decodeとportable PNG変換とする。既存video-element frame captureのcorrectnessを同時に作り直さない。
+
+### 自動検証
+
+- native JPEG相当の一captureでfull-resolution decodeが一回だけ呼ばれ、dimensions、Clipboard PNG、thumbnail rasterへ共有される。
+- Clipboard representation readyとsettlementのtimestampが同じoriginで記録され、derived browser timeが正しく計算される。early rejectionではbrowser timeを捏造しない。
+- historyはthumbnailとClipboardの未settled状態でも追加され、後からthumbnailだけが更新される。
+- thumbnail encodeはClipboard success / failureのどちらでもsettlement後に始まり、それ以前には開始しない。
+- Worker adapterのsuccess、unsupported、initialization failure、job failure、crash、stale response、concurrent jobを確認する。
+- worker / fallbackの両経路でnative artifact、actual dimensions、portable `image/png` Clipboard representationが一致する。
+- `ImageBitmap.close()`、full canvas解放、pending job cleanupがsuccess / failureの全経路で行われる。
+- app起動後のcapture / copy操作が追加network request、persistent image storage、Service Workerを発生させない。
+- `npm run verify`が成功し、Android実機ではphase開始前後のstage timingを同一解像度・同一routeで記録する。
+
+### Deferred experiments / non-goals
+
+- generic libpng WASM、single-thread SIMD、ultra-fast low-compression PNGはWorker / decode-once後のstage timingでapplication PNGが依然支配的な場合だけ別benchmarkとして検討する。
+- Wasm threadsはcross-origin isolationと現在のGitHub Pages / no-Service-Worker contractが整合しないためPhase 3.5へ含めない。
+- WebCodecs `VideoEncoder`、WebGPU、`willReadFrequently`の決め打ちは今回のstill PNG bottleneckの既定解にしない。
+- Android native content-URI Clipboard adapterはWeb API外の別product routeとする。検討時はmemory-only providerのprocess-death耐性とtemporary fileを使う場合のno-storage contract変更を先に裁定する。
+- Phase 3.5ではpreview最大化と明示的な`photoPreferred | videoFrame` preferenceを維持し、adaptive route / preview解像度最適化は導入しない。
+
+### Commit
+
+`perf: complete phase 3.5 capture pipeline optimization`
+
 ## 6. Phase 4: Idle timeout core + hard camera suspend
 
 ### Core model
@@ -463,4 +528,9 @@ push前にremoteが進んでいた場合は、remote差分を確認してからn
 - [MDN: ImageCapture.takePhoto()](https://developer.mozilla.org/en-US/docs/Web/API/ImageCapture/takePhoto)
 - [W3C: Clipboard API and events](https://www.w3.org/TR/clipboard-apis/)
 - [MDN: ClipboardItem.supports()](https://developer.mozilla.org/en-US/docs/Web/API/ClipboardItem/supports_static)
+- [MDN: OffscreenCanvas.convertToBlob()](https://developer.mozilla.org/en-US/docs/Web/API/OffscreenCanvas/convertToBlob)
+- [MDN: OffscreenCanvas.getContext()](https://developer.mozilla.org/en-US/docs/Web/API/OffscreenCanvas/getContext)
+- [Chromium: Clipboard image writer](https://chromium.googlesource.com/chromium/src/+/2ae2589b5697a61ec4d96d3bdf7a726e38a2e58c/third_party/blink/renderer/modules/clipboard/clipboard_writer.cc)
+- [Chromium: Android Clipboard bitmap writer](https://chromium.googlesource.com/chromium/src/+/e40dc1e2c83b02f4a41cd2cb88c0abad32c60ca5/ui/base/clipboard/clipboard_android.cc)
+- [Chromium: Canvas async Blob creator](https://chromium.googlesource.com/chromium/src/third_party/+/master/blink/renderer/core/html/canvas/canvas_async_blob_creator.cc)
 - [WHATWG HTML: Web storage](https://html.spec.whatwg.org/multipage/webstorage.html)
