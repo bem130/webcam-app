@@ -1,5 +1,5 @@
 import type { CameraError, ClipboardError } from "./errors";
-import { addCapture, removeCapture, shouldWarnAboutMemory } from "./history";
+import { addCapture, addCaptureThumbnail, removeCapture, shouldWarnAboutMemory } from "./history";
 import type {
   AppModel,
   CameraDescriptor,
@@ -8,29 +8,31 @@ import type {
   CaptureEntry,
   CaptureId,
 } from "./model";
+import type { Option } from "./result";
 import { none, some } from "./result";
 
 export type AppAction =
   | Readonly<{ type: "cameraRequestStarted" }>
   | Readonly<{
       type: "cameraStarted";
-      current: CameraId | null;
+      current: Option<CameraId>;
       cameras: readonly CameraDescriptor[];
-      videoSettings: CameraVideoSettings | null;
+      videoSettings: Option<CameraVideoSettings>;
     }>
   | Readonly<{ type: "cameraFailed"; error: CameraError }>
   | Readonly<{ type: "cameraSwitchStarted"; target: CameraId }>
   | Readonly<{
       type: "cameraSwitched";
-      previous: CameraId | null;
+      previous: Option<CameraId>;
       current: CameraId;
       cameras: readonly CameraDescriptor[];
-      videoSettings: CameraVideoSettings | null;
+      videoSettings: Option<CameraVideoSettings>;
     }>
   | Readonly<{ type: "cameraSuspended" }>
   | Readonly<{ type: "cameraResumed" }>
   | Readonly<{ type: "devicesUpdated"; cameras: readonly CameraDescriptor[] }>
   | Readonly<{ type: "captureAdded"; entry: CaptureEntry }>
+  | Readonly<{ type: "captureThumbnailAdded"; captureId: CaptureId; thumbnail: Blob }>
   | Readonly<{ type: "copyStarted"; captureId: CaptureId }>
   | Readonly<{ type: "copySucceeded"; captureId: CaptureId }>
   | Readonly<{ type: "copyFailed"; captureId: CaptureId; error: ClipboardError }>
@@ -48,10 +50,10 @@ export function update(model: AppModel, action: AppAction): AppModel {
         ...model,
         camera: {
           tag: "streaming",
-          current: action.current === null ? none : some(action.current),
+          current: action.current,
         },
         cameras: action.cameras,
-        videoSettings: action.videoSettings === null ? none : some(action.videoSettings),
+        videoSettings: action.videoSettings,
       };
     case "cameraFailed":
       return {
@@ -67,9 +69,9 @@ export function update(model: AppModel, action: AppAction): AppModel {
       return {
         ...model,
         camera: { tag: "streaming", current: some(action.current) },
-        previousCamera: action.previous === null ? none : some(action.previous),
+        previousCamera: action.previous,
         cameras: action.cameras,
-        videoSettings: action.videoSettings === null ? none : some(action.videoSettings),
+        videoSettings: action.videoSettings,
       };
     case "cameraSuspended":
       return model.camera.tag === "streaming"
@@ -83,6 +85,15 @@ export function update(model: AppModel, action: AppAction): AppModel {
       return { ...model, cameras: action.cameras };
     case "captureAdded": {
       const history = addCapture(model.history, action.entry);
+      return {
+        ...model,
+        history,
+        memoryWarningShown:
+          model.memoryWarningShown || shouldWarnAboutMemory(history, model.memoryWarningShown),
+      };
+    }
+    case "captureThumbnailAdded": {
+      const history = addCaptureThumbnail(model.history, action.captureId, action.thumbnail);
       return {
         ...model,
         history,

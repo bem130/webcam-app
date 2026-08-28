@@ -18,10 +18,11 @@ describe("capture operation", () => {
     };
 
     const operation = beginCaptureAndCopy(video, encoder, clipboard);
-    await expect(operation.encoded).resolves.toEqual({
+    await expect(operation.captured).resolves.toEqual({
       tag: "ok",
-      value: { png, thumbnail, width: 640, height: 480 },
+      value: { png, width: 640, height: 480 },
     });
+    await expect(operation.thumbnail).resolves.toEqual({ tag: "ok", value: thumbnail });
     await expect(operation.clipboard).resolves.toEqual({
       tag: "err",
       error: { tag: "notAllowed" },
@@ -39,7 +40,11 @@ describe("capture operation", () => {
     };
 
     const operation = beginCaptureAndCopy(video, encoder, clipboard);
-    await expect(operation.encoded).resolves.toEqual({
+    await expect(operation.captured).resolves.toEqual({
+      tag: "err",
+      error: { tag: "pngEncodingFailed" },
+    });
+    await expect(operation.thumbnail).resolves.toEqual({
       tag: "err",
       error: { tag: "pngEncodingFailed" },
     });

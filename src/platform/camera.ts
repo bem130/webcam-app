@@ -6,7 +6,7 @@ import {
   type CameraId,
   type CameraVideoSettings,
 } from "../core/model";
-import { err, ok, type Result } from "../core/result";
+import { err, none, ok, some, type Option, type Result } from "../core/result";
 
 export const INITIAL_CONSTRAINTS: MediaStreamConstraints = {
   audio: false,
@@ -58,17 +58,17 @@ export async function preferMaximumVideoResolution(
   }
 }
 
-export function cameraVideoSettings(stream: MediaStream): CameraVideoSettings | null {
+export function cameraVideoSettings(stream: MediaStream): Option<CameraVideoSettings> {
   const settings = stream.getVideoTracks()[0]?.getSettings();
   const width = settings?.width;
   const height = settings?.height;
-  if (width === undefined || height === undefined || width <= 0 || height <= 0) return null;
+  if (width === undefined || height === undefined || width <= 0 || height <= 0) return none;
   const frameRate = settings?.frameRate;
-  return {
+  return some({
     widthPx: width,
     heightPx: height,
-    frameRate: frameRate === undefined || frameRate <= 0 ? null : frameRate,
-  };
+    frameRate: frameRate === undefined || frameRate <= 0 ? none : some(frameRate),
+  });
 }
 
 export async function enumerateCameras(): Promise<readonly CameraDescriptor[]> {
@@ -89,9 +89,9 @@ export function cameraDescriptorsFromDevices(
     }));
 }
 
-export function currentCameraId(stream: MediaStream): CameraId | null {
+export function currentCameraId(stream: MediaStream): Option<CameraId> {
   const id = stream.getVideoTracks()[0]?.getSettings().deviceId;
-  return id ? cameraId(id) : null;
+  return id ? some(cameraId(id)) : none;
 }
 
 export function stopStream(stream: MediaStream | null): void {

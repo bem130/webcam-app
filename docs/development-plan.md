@@ -16,11 +16,11 @@
 | ----: | --------------------------------------------------------------- | ---------------- |
 |     1 | PWA installation                                                | 完了 (`4d2ef2b`) |
 |     2 | Full-resolution video-frame capture + resolution display        | 完了 (`14339ac`) |
-|   2.5 | Architecture and repository verification gates                  | 未着手           |
+|   2.5 | Architecture and repository verification gates                  | 完了             |
 |     3 | Native still capture via `ImageCapture` progressive enhancement | 未着手           |
 |     4 | Idle timeout core + hard camera suspend                         | 未着手           |
 |     5 | Screensaver + interaction-based resume                          | 未着手           |
-|     6 | Preferences (`10s` … `10m` / `off`)                             | 未着手           |
+|     6 | Preferences (idle timeout + capture mode)                       | 未着手           |
 |     7 | Acceptance automation + high-resolution memory hardening        | 未着手           |
 |     8 | Documentation + release hardening                               | 未着手           |
 
@@ -36,24 +36,44 @@ V2開発完了までは、本書をV2変更事項のnormative specificationと�
 - camera frame、`Blob`、Object URL、thumbnail、device label / IDをnetwork、Cache Storage、IndexedDB、filesystem、`localStorage`へ書き込まない。
 - Service Workerを導入せず、meta CSPの`connect-src 'none'`を維持する。
 - microphoneを要求せず、camera constraintsでは常に`audio: false`を維持する。
-- 永続化を許可するのはversion付きの非画像preferenceである`idleTimeout`だけとし、`src/platform/preferences.ts`以外からWeb Storageへアクセスしない。
+- 永続化を許可するのはversion付きの非画像preferenceである`idleTimeout`と`capturePreference`だけとし、`src/platform/preferences.ts`以外からWeb Storageへアクセスしない。
 - preferences portの型は画像、`Blob`、`CaptureEntry`を受け取れない形に限定する。
 
 ### 2.2 Capture qualityとfallback
 
-最高品質routeとfallbackを分離する。
+ユーザーが選ぶpreference、実際に使用したroute、生成された画像形式を分離する。
+
+```ts
+type CapturePreference = "photoPreferred" | "videoFrame";
+
+type CaptureRoute = "photo" | "videoFrame";
+
+type ImageMimeType = `image/${string}`;
+
+type CapturedImage = {
+  readonly blob: Blob;
+  readonly mimeType: ImageMimeType;
+  readonly widthPx: number;
+  readonly heightPx: number;
+  readonly route: CaptureRoute;
+};
+```
 
 ```text
-ImageCapture対応・photo capability取得成功
+preference = photoPreferred
+かつ ImageCapture対応・photo capability取得成功
   -> maximum still dimensionsを要求してtakePhoto()
-  -> PNGへ変換
+  -> native encoded BlobをCapturedImageとして保持
 
-ImageCapture非対応・capability取得失敗・takePhoto失敗
+preference = videoFrame
+または ImageCapture非対応・capability取得失敗・takePhoto失敗
   -> 最大化したvideo streamのcurrent frame
   -> PNGへ変換
 ```
 
-`takePhoto()`はoptional progressive enhancementであり、camera開始、camera切替、video-frame captureを阻害してはならない。Clipboard writeは既存のWebKit user activation contractを維持し、最初の`await`より前にPNG Promiseを入れた`ClipboardItem`を書込み始める。
+`takePhoto()`はoptional progressive enhancementであり、camera開始、camera切替、video-frame captureを阻害してはならない。`photoPreferred`はphoto routeの成功を保証する名前ではなく、失敗時に`videoFrame`へfallbackするpreferenceである。actual routeは各history entryへ保持し、configured preferenceと混同しない。
+
+capture artifactとClipboard representationも分離する。`takePhoto()`が返したnative encoded Blobはhistoryでは再encodeせず保持する。一方、Clipboard APIでportableな画像writeとして保証される形式は`image/png`であり、`takePhoto()`の返却MIMEは非同期に初めて確定するため、Phase 3の互換経路は最初の`await`より前に`image/png`のPromiseを入れた`ClipboardItem`を書込み始める。native MIMEを直接Clipboardへ書く最適化は、shutter時点でMIMEを安全に確定でき、`ClipboardItem.supports(mimeType)`と実writeの両方を満たせる実装に限る。標準APIだけで事前確定できない環境では推測したMIME keyを使わない。
 
 ### 2.3 CaptureとClipboardの独立lifecycle
 
@@ -61,20 +81,21 @@ captureとcopyは同じuser actionから開始するが、開始後のlifecycle�
 
 ```text
 shutter
-  ├─ ClipboardItem(Promise<PNG>)を同期的にwrite開始
+  ├─ ClipboardItem(Promise<compatible representation>)を同期的にwrite開始
   │    └─ Clipboard success / failure transition
   │
-  └─ camera source acquisition -> PNG encode
-       ├─ encode成功直後にhistory追加
+  └─ camera source acquisition -> CapturedImage
+       ├─ artifact完成直後にhistory追加
        ├─ thumbnail生成
+       ├─ 必要な場合だけClipboard用PNG互換変換
        └─ cameraはidle / background hard stop可能
 ```
 
-- PNG encode成功後のhistory追加とcamera resource releaseはClipboard settlementを待たない。
-- Clipboard success / failureはencode / historyと独立したstate transitionとして処理する。
-- idle inhibitionはcamera source acquisition、still decode、PNG encode、camera switchの間だけ有効にする。
+- capture artifact完成後のhistory追加とcamera resource releaseはthumbnail、Clipboard変換、Clipboard settlementを待たない。
+- Clipboard success / failureはcapture / historyと独立したstate transitionとして処理する。
+- idle inhibitionはcamera source acquisition、video-frame PNG encode、camera switchの間だけ有効にする。native still Blob取得後のthumbnail生成、Clipboard用互換変換、Clipboard settlementはcameraを保持する理由にしない。
 - Clipboard write結果待ち、history追加後のUI feedback、thumbnail完成待ちはcameraを保持する理由にしない。
-- capture source / PNG encode失敗時はhistoryを追加せず、Clipboard側のfailure feedbackでcapture errorを上書きしない。
+- capture source / artifact生成失敗時はhistoryを追加せず、Clipboard側のfailure feedbackでcapture errorを上書きしない。historyへnative artifactを追加できた後にClipboard互換変換だけが失敗しても、撮影成功を取り消さない。
 
 ### 2.4 解像度表示
 
@@ -83,14 +104,14 @@ UIでは実測値とcapabilityを混同しない。
 - `MediaStreamTrack.getSettings()`由来の実際のpreview width、height、frame rateを「プレビュー」として表示する。
 - `getPhotoCapabilities()`が利用できる場合は、still photoの最大要求dimensionsを「撮影」として別表示する。
 - `ImageCapture`非対応時は「プレビュー / 撮影」として同じvideo-frame dimensionsを表示する。
-- history entryには常に実際に生成したPNGのpixel dimensionsを表示する。
+- history entryには実際の`CapturedImage`のpixel dimensions、MIME、actual routeを保持する。通常UIではfallbackを静かに扱い、details / debugでrouteを確認可能にする。
 - camera切替、idle復帰、track settings変更後に表示を更新する。
 
 ### 2.5 Idle / background invariant
 
 - 初期timeoutは`10s`とし、選択肢は`10s`、`30s`、`1m`、`3m`、`5m`、`10m`、`off`に限定する。
 - timeout時はvideoを隠すだけでなく、全camera trackへ`stop()`を呼んでhardwareを解放する。
-- camera source acquisition、still decode、PNG encode中はidle transitionを延期し、PNG settlement後にtimerを再armする。Clipboard write settlementは待たない。
+- camera source acquisition、video-frame PNG encode中はidle transitionを延期し、capture artifact settlement後にtimerを再armする。native still Blob取得後のdecode / thumbnail / Clipboard互換変換とClipboard settlementは待たない。
 - screensaverを解除する最初のinteractionはresume専用としてconsumeし、shutterや背後のcontrolを発火させない。
 - `pointerdown`、`keydown`、`wheel`をactivityとして扱い、`pointermove`はtimer reset対象にしない。
 - backgroundとidleのどちらでも全trackへ`stop()`を呼び、camera hardware releaseをapplication contractにする。
@@ -166,6 +187,14 @@ V2のeffect surfaceを追加する前に、方針違反をCIで拒否できる�
 - Phase 2.5ではcapture controllerとcamera session boundaryを導入し、Phase 4前にidle controllerを独立追加できる形にする。
 - core actionの不存在表現を`Option`へ統一し、browser / DOM境界の`null`をcoreへ持ち込まない。
 
+### UI stacking gate
+
+- 通常UI、app overlay、`showModal()`によるtop layer modalを別のstacking planeとして扱う。
+- 同一stacking contextで表現できる上下関係はcamera viewまたは`AppOverlayPlane`のDOM/render順をsource of truthにする。
+- DOM順で不足する場合だけsemantic ordered declarationから`--z-generated-*`を生成し、生の数値`z-index`と未登録layerをarchitecture testで拒否する。
+- history / confirm dialogはtop layerを利用し、通常documentの`z-index`体系へ混ぜない。
+- `transform`、`opacity`、`filter`、`isolation`、`contain`、fixed / sticky positioningを追加する変更ではstacking context treeを再監査する。
+
 ### Verification semantics
 
 - `verify:source`をformat、lint、typecheck、unit / integration、buildのfast gateとする。
@@ -186,6 +215,7 @@ V2のeffect surfaceを追加する前に、方針違反をCIで拒否できる�
 - encode完了後、未settled Clipboardを待たずhistory追加とcapture idle解除が起きる。
 - Clipboardが先にsettleしてもencode / history resultを変えない。
 - core action payloadに`CameraId | null`を残さない。
+- style sourceに生の数値`z-index`がなく、modal componentが`showModal()`を使用する。
 - `npm run verify`がsourceとE2Eの両方を実行する。
 
 ### Commit
@@ -194,32 +224,63 @@ V2のeffect surfaceを追加する前に、方針違反をCIで拒否できる�
 
 ## 5. Phase 3: Native still capture via ImageCapture
 
+### Capture preferenceとactual route
+
+```ts
+type CapturePreference = "photoPreferred" | "videoFrame";
+
+type CaptureRoute = "photo" | "videoFrame";
+```
+
+- defaultは`photoPreferred`とし、`ImageCapture`が利用可能なcameraではnative still routeを優先する。
+- settings UIから`photoPreferred`と`videoFrame`を明示的に選択可能にする。Phase 3ではcurrent documentのsession stateだけに保持し、Phase 6で非画像preferenceとして永続化する。
+- `videoFrame`選択時は`ImageCapture` capabilityが存在しても`takePhoto()`を呼ばず、Phase 2のcurrent video-frame routeを使う。
+- `ImageCapture`非対応時は`photoPreferred` optionをdisabledにしてeffective routeを`videoFrame`とする。保存値またはdefaultの`photoPreferred`自体は破壊せず、対応cameraへ切り替えた場合は再びphoto routeを利用可能にする。
+- `photoPreferred`選択時のcapability取得 / `takePhoto()`失敗はvideo-frameへ一度fallbackし、設定値を暗黙に書き換えない。
+- 通常UIではfallbackを静かに扱う。configured preference、現在利用可能なroute、各captureのactual routeは別のstate / fieldとして保持し、history detailsまたはlocal debug表示で確認可能にする。
+- `auto`はPhase 3へ含めない。明示的な2 preferenceで端末実測を集め、adaptive strategyの価値と状態空間を再評価してから別phaseで判断する。
+
 ### 実装
 
 - `globalThis.ImageCapture`をcapability detectionし、存在する場合だけvideo trackからadapterを生成する。
 - `getPhotoCapabilities()`の`imageWidth.max` / `imageHeight.max`をstill captureの最大要求dimensionsとして保持する。
 - shutterでは`takePhoto({ imageWidth, imageHeight })`を最高品質routeとして使う。
-- `takePhoto()`が返すencoded imageをdecodeし、実際のdimensionsを保ったPNGへ変換してClipboardとhistoryへ渡す。
-- `ImageCapture`非対応、photo capability取得失敗、`takePhoto()`失敗、返却Blobのdecode失敗時は、trackがliveならPhase 2のvideo-frame captureへ一度fallbackする。
+- `takePhoto()`が返すencoded BlobはMIMEを検証し、実dimensionsを取得したうえで再encodeせず`CapturedImage`としてhistoryへ渡す。capture domainでPNGを前提にしない。
+- `ImageCapture`非対応、photo capability取得失敗、`takePhoto()`失敗、返却BlobのMIME / decode検証失敗時は、trackがliveならPhase 2のvideo-frame captureへ一度fallbackする。
 - fallbackも失敗した場合だけtyped capture errorを表示する。fallbackした事実は画像内容を含めずstatusとして通知してよい。
 - photo capabilityがvideo settingsと異なる場合、camera viewまたはdetailsに「プレビュー」と「撮影 最大」を分けて表示する。
-- photo PNG encode完了後にtemporary `ImageBitmap`をcloseし、巨大canvasを縮小してbacking storeを解放する。
+- thumbnailはnative Blobから非同期生成し、temporary `ImageBitmap`をcloseする。native stillをhistoryへ追加するためのfull-size canvas / PNG encodeは作らない。
+- Clipboard adapterはcapture形式とClipboard representationを分離する。portable fallbackは同期的に開始した`image/png` Promiseへnative Blobを必要時だけ変換し、native MIME direct writeは事前にMIMEを確定できる場合だけopt-inする。
+- Phase 3ではpreview streamの最大化を維持する。photo preference用の軽量previewやfallback時のstream再設定は同時導入せず、同一preview条件でroute別timingを比較してから判断する。
+
+### Local performance measurement
+
+- 外部送信や永続化を行わないlocal timingとして、source acquisition、video-frame PNG encodeまたはClipboard互換変換、thumbnail、Clipboard settlementを個別に計測する。
+- timing recordにはactual route、source / output dimensions、native MIME、Clipboard MIME、Blob byte lengthを含め、各stageが未実行の場合は`Option.none`で表す。画像内容、device ID / labelは含めない。
+- user agentは既存browser情報からその場で参照するdebug情報に限り、preferenceやhistoryへ保存しない。
+- 端末実測の暫定baselineとして、Androidの3000×4000 video-frame PNGで約10秒、2448×3264で約2秒という観測を記録する。これは自動測定前の参考値であり、原因確定値として扱わない。
+- 計測結果はcapture成功判定やroute選択へfeedbackしない。Phase 3ではauto adaptiveを実装しない。
 
 ### 自動検証
 
+- default `photoPreferred`かつsupported時はnative still routeを選び、actual routeを`photo`として記録する。
+- `videoFrame`選択時はsupported環境でも`getPhotoCapabilities()` / `takePhoto()`を呼ばない。
+- unsupported時は`photoPreferred`を選択不能としてvideo-frame routeだけを使い、stored preferenceを書き換えず、対応cameraへの切替後はphoto routeを再利用できる。
 - supported時に`getPhotoCapabilities()`を呼び、maximum `imageWidth` / `imageHeight`を`takePhoto()`へ渡す。
 - unsupported時はPhase 2のvideo-frame routeだけを使う。
-- capability取得失敗と`takePhoto()`失敗ではvideo-frame routeへfallbackする。
+- capability取得失敗と`takePhoto()`失敗ではvideo-frame routeへfallbackし、actual routeを`videoFrame`として記録する。
 - trackがendedならfallbackで不正なcaptureを作らずtyped errorにする。
-- returned still Blobの実dimensionsをhistoryとresolution表示へ反映する。
-- Clipboard write開始が最初の`await`より前である既存contractを維持する。
-- still image metadataを永続化・送信せず、最終Clipboard payloadをPNGに限定する。
+- returned still Blobのnative MIMEと実dimensionsをhistoryへ反映し、history用full-size PNG re-encodeを行わない。
+- Clipboard write開始が最初の`await`より前である既存contractを維持し、capture / history successはClipboard互換変換やsettlementを待たない。
+- native MIME direct writeを行う場合は事前確定、`ClipboardItem.supports()`、runtime writeのgateをtestし、それ以外は`image/png`互換経路を使う。
+- stage timingがroute / dimensions / byte lengthとともにlocalで観測でき、計測失敗が撮影を壊さない。
+- still image metadataとtimingを永続化・送信しない。
 
 ### 完了条件
 
-- 対応環境ではvideo stream resolutionを超えるstill photo capabilityを利用できる。
+- 対応環境ではvideo stream resolutionを超えるstill photo capabilityを利用でき、native encoded artifactをhistoryへ再encodeせず保持する。
 - 非対応環境ではPhase 2と同じ完全なcapture experienceを維持する。
-- `npm run verify`と`npm run test:e2e`が成功する。
+- `npm run verify`が成功する。
 
 ### Commit
 
@@ -246,7 +307,7 @@ streaming -- timeout --> idleSuspended -- explicit resume --> requesting --> str
 
 - default `10s`のidle timerをpure core decisionとtimer adapterに分離する。
 - timeout時はcurrent camera IDを再開用に保持してから全trackを`stop()`し、stream referenceとvideo `srcObject`を解放する。
-- camera source acquisition、still decode、PNG encode、camera switch中はidle suspendしない。PNG settlementを新しいactivityとしてtimerを再armし、Clipboard settlementは待たない。
+- camera source acquisition、video-frame PNG artifact生成、camera switch中はidle suspendしない。capture artifact settlementを新しいactivityとしてtimerを再armし、native still取得後のdecode / thumbnail / Clipboard互換変換とClipboard settlementは待たない。
 - `off`ではidle timerを作成しない。
 - Phase 4ではidle停止理由と「カメラを再開」actionを明示する最小UIを提供し、Phase 5でscreensaverへ拡張する。
 - background / idleの両方でhard stopしつつ別reasonとして扱い、二重resumeやstale transactionを防ぐ。
@@ -287,13 +348,15 @@ streaming -- timeout --> idleSuspended -- explicit resume --> requesting --> str
 
 `feat: complete phase 5 idle screensaver`
 
-## 8. Phase 6: Idle timeout preferences
+## 8. Phase 6: User preferences
 
 ### 実装
 
 - camera viewから短い操作で到達できるsettings UIを追加する。
 - `10s`、`30s`、`1m`、`3m`、`5m`、`10m`、`off`だけを選択可能にする。
-- version付きの最小payload `{ version: 1, idleTimeout }`だけを`src/platform/preferences.ts`で`localStorage`へ保存する。
+- `capturePreference`は`photoPreferred`または`videoFrame`だけを許可し、defaultを`photoPreferred`とする。
+- version付きの最小payload `{ version: 1, idleTimeout, capturePreference }`だけを`src/platform/preferences.ts`で`localStorage`へ保存する。
+- 保存するのはpreferenceだけであり、ImageCapture非対応環境でruntime routeが`videoFrame`になっても`photoPreferred`の保存値を上書きしない。
 - missing、invalid、future version、JSON parse error、SecurityError / quota errorは安全なdefault `10s`へfallbackする。
 - preference変更時は現在のtimerをcancelし、新しい設定で再armする。`off`選択時は稼働中cameraを停止せずauto-stopだけを無効にする。
 - installed PWAとbrowser tabで同じorigin preferenceを共有し得ることを文書化する。
@@ -303,13 +366,14 @@ streaming -- timeout --> idleSuspended -- explicit resume --> requesting --> str
 source全体の`localStorage`文字列禁止を、次のarchitecture contractへ置き換える。
 
 - Web Storage accessは`src/platform/preferences.ts`だけに許可する。
-- preferences payloadは`version`と`idleTimeout`以外を持てない。
+- preferences payloadは`version`、`idleTimeout`、`capturePreference`以外を持てない。
 - capture / history codeからpreferences portへ`Blob`、Object URL、dimensions、device情報を渡せない。
 - IndexedDB、Cache Storage、Service Worker、network、download禁止は維持する。
 
 ### 自動検証
 
-- 全optionのround trip、valid value restore、missing / invalid / stale valueのdefault fallbackを確認する。
+- 全optionのround trip、valid value restore、missing / invalid / stale valueのdefault `10s` / `photoPreferred` fallbackを確認する。
+- stored preferenceとeffective / actual routeが独立し、非対応cameraへの切替で保存値が変わらないことを確認する。
 - storage APIがthrowしてもcamera起動を阻害しない。
 - preference変更でtimerが正しく再arm / cancelされる。
 - image `Blob`がpersistent preferenceへ到達するAPI surfaceを持たない。
@@ -324,14 +388,17 @@ source全体の`localStorage`文字列禁止を、次のarchitecture contractへ
 
 - 320×568、390×844、768×1024、1280×800のrequired viewportをbrowser testへ固定する。
 - keyboard focus、Escape、reduced motion、forced colorsの主要contractを自動化する。
-- Chromiumでは実際のClipboard APIへPNGを書き、同じbrowser contextでread-backする。
+- Chromiumでは実際のClipboard APIへportableなPNG representationを書き、同じbrowser contextでread-backする。native MIME direct writeは対象browserが明示的にsupportする場合だけ追加検証する。
 - test用fake camera / Clipboard以外のnetwork requestや画像persistent storageが増えていないことを再確認する。
 
 ### Resolution / ImageCapture
 
 - 4K source、portrait 4K、video settings表示、still capability表示をcontract testへ固定する。
 - `ImageCapture` supported / unsupported / capability failure / `takePhoto()` failureを全て確認する。
-- actual photo dimensionsとhistory dimensionsが一致する。
+- configured `CapturePreference`とactual `CaptureRoute`を別々に検証し、fallback後もpreferenceが変化しない。
+- actual photo dimensions、native MIME、history artifactが一致し、native still history pathがfull-size PNG re-encodeを呼ばない。
+- capture artifact完成後のhistory追加はthumbnail、Clipboard互換変換、Clipboard settlementを待たない。
+- source acquisition、compatibility encode、thumbnail、Clipboard settlementのtimingが独立して記録され、欠落stageを`Option`で表現する。
 
 ### Idle / preferences
 
@@ -380,7 +447,8 @@ source全体の`localStorage`文字列禁止を、次のarchitecture contractへ
 3. browser挙動を変更したphaseではPlaywright E2Eも確認する。
 4. `git diff --check`とstaged diffをreviewし、secretと意図しない大容量fileを確認する。
 5. phase専用commitを作成する。
-6. `origin/main`へpushし、次のphaseへ進む。
+6. phase branchへpushしてPRを作成し、required `Verify`成功後だけprotected `main`へmergeする。
+7. merge後の`origin/main`とdeploy結果を確認してから次のphaseへ進む。
 
 push前にremoteが進んでいた場合は、remote差分を確認してからnon-destructiveに統合する。既存CI/CD workflowを各機能の都合だけで変更しない。
 
@@ -393,4 +461,6 @@ push前にremoteが進んでいた場合は、remote差分を確認してからn
 - [MDN: ImageCapture](https://developer.mozilla.org/en-US/docs/Web/API/ImageCapture)
 - [MDN: ImageCapture.getPhotoCapabilities()](https://developer.mozilla.org/en-US/docs/Web/API/ImageCapture/getPhotoCapabilities)
 - [MDN: ImageCapture.takePhoto()](https://developer.mozilla.org/en-US/docs/Web/API/ImageCapture/takePhoto)
+- [W3C: Clipboard API and events](https://www.w3.org/TR/clipboard-apis/)
+- [MDN: ClipboardItem.supports()](https://developer.mozilla.org/en-US/docs/Web/API/ClipboardItem/supports_static)
 - [WHATWG HTML: Web storage](https://html.spec.whatwg.org/multipage/webstorage.html)

@@ -46,9 +46,12 @@ describe("camera video quality", () => {
     } as unknown as MediaStream;
 
     expect(cameraVideoSettings(stream)).toEqual({
-      widthPx: 3840,
-      heightPx: 2160,
-      frameRate: 29.97,
+      tag: "some",
+      value: {
+        widthPx: 3840,
+        heightPx: 2160,
+        frameRate: { tag: "some", value: 29.97 },
+      },
     });
   });
 });

@@ -31,4 +31,14 @@ describe("deployment contract", () => {
   it("keeps the GitHub project-site base path", () => {
     expect(readFileSync("vite.config.ts", "utf8")).toContain('base: "/webcam-app/"');
   });
+
+  it("makes verify the complete source and browser gate", () => {
+    const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as {
+      scripts: Record<string, string>;
+    };
+
+    expect(packageJson.scripts.verify).toBe("npm run verify:source && npm run verify:e2e");
+    expect(workflow).toContain("run: npm run verify:source");
+    expect(workflow).toContain("run: npm run verify:e2e");
+  });
 });

@@ -59,13 +59,13 @@ jobs:
       # Playwright browser binaries. This fails faster on formatting,
       # lint, type, unit/integration test, or build errors.
       - name: Verify source
-        run: npm run verify
+        run: npm run verify:source
 
       - name: Install Playwright browsers
         run: npx --no-install playwright install --with-deps chromium firefox webkit
 
       - name: Run browser tests
-        run: npm run test:e2e
+        run: npm run verify:e2e
 
       # pull_request runs verify the application but must never produce
       # a deployable Pages artifact.

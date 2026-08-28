@@ -6,7 +6,7 @@ import {
   shouldWarnAboutMemory,
 } from "../../src/core/history";
 import { captureId, type CaptureEntry } from "../../src/core/model";
-import { none } from "../../src/core/result";
+import { none, some } from "../../src/core/result";
 
 function entry(id: string, pngBytes = 10, thumbnailBytes = 2): CaptureEntry {
   return {
@@ -16,7 +16,7 @@ function entry(id: string, pngBytes = 10, thumbnailBytes = 2): CaptureEntry {
     widthPx: 100,
     heightPx: 50,
     png: { size: pngBytes } as Blob,
-    thumbnail: { size: thumbnailBytes } as Blob,
+    thumbnail: some({ size: thumbnailBytes } as Blob),
     byteLength: pngBytes,
   };
 }

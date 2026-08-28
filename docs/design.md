@@ -317,15 +317,19 @@ Safari/WebKitではClipboard writeにuser gestureが必要である。したが�
 ```ts
 function captureAndCopy(video: HTMLVideoElement): CaptureOperation {
   const png: Promise<Blob> = encodeVisibleFrameAsPng(video);
-  const clipboard: Promise<void> = navigator.clipboard.write([
+  const clipboard = navigator.clipboard.write([
     new ClipboardItem({ "image/png": png }),
   ]);
 
-  return combineCaptureOutcomes(png, clipboard);
+  return {
+    captured: observePng(png),
+    thumbnail: observeThumbnail(png),
+    clipboard: observeClipboard(clipboard),
+  };
 }
 ```
 
-この関数の呼出しと`clipboard.write()`の間へ`await`、`queueMicrotask`、`setTimeout`、component effectを挟まない。
+この関数の呼出しと`clipboard.write()`の間へ`await`、`queueMicrotask`、`setTimeout`、component effectを挟まない。`captured`、`thumbnail`、`clipboard`は独立してsettleする。PNG完成直後にhistoryへ追加してcapture busyを解除し、thumbnailまたはClipboardの完了を待たない。capture失敗後にClipboard resultが到着してもcapture errorを上書きしない。
 
 ## 8. Technical architecture
 
@@ -348,23 +352,36 @@ Rust/Wasmは採用しない。本アプリの主要処理は`getUserMedia`、DOM
 
 ```mermaid
 flowchart TD
-    UI["UI components"] --> Core["Pure core: Model / update"]
-    UI --> Runtime["Imperative runtime"]
-    Runtime --> Camera["Camera adapter"]
-    Runtime --> Capture["Canvas encoder"]
-    Runtime --> Clipboard["Clipboard adapter"]
+    UI["UI components"] --> Application["Application controllers"]
+    UI --> Core["Pure core: Model / update"]
+    Application --> Core
+    Application --> Platform["Web platform adapters"]
 ```
 
 - `core`はDOM、`navigator`、timer、networkを参照しない。
 - `platform`はWeb APIの`null`、`undefined`、exceptionを直ちにdomainの`Option` / `Result` / error unionへ変換する。
-- `ui`はdomain stateを表示し、user intentをruntimeへ渡す。
+- `application`はcapture、camera session、idle等のeffect lifecycleを小さいcontrollerへ分離する。
+- `ui`はdomain stateを表示し、user intentをapplication controllerへ渡す。
 - errorの識別と表示文を分離し、表示文はmessage catalogで管理する。
-- dependency graphは`ui -> core`、`ui -> runtime -> platform`を基本とし、`core`から外側へ依存しない。
+- architecture testは`core -> platform/application/ui`、`platform -> application/ui`、`application -> ui`を拒否する。
 
-### 8.3 Directory layout
+### 8.3 UI stacking planes
+
+上下関係は次の三平面へ分け、通常UIを一つのglobal `z-index` total orderへ混ぜない。
+
+1. camera-local UIは同一stacking context内のDOM/render順で表現する。
+2. status、memory warning、将来のscreensaver等は`AppOverlayPlane`のtyped ordered declarationからDOM順を生成する。
+3. historyとconfirm modalは`HTMLDialogElement.showModal()`によるbrowser top layerを使う。
+
+数値の`z-index`を直接記述してはならない。DOM順だけでは表現できないoverlayが将来必要になった場合に限り、意味上のordered declarationから`--z-generated-*`を生成する。style sourceではそのgenerated variableだけを許可し、未登録layerと`z-index: 9999`型の局所修正をarchitecture testで拒否する。`transform`、`opacity`、`filter`、`position: fixed/sticky`等が新しいstacking contextを作り得るため、overlay追加時は親を含むstacking context treeを確認する。
+
+### 8.4 Directory layout
 
 ```text
 src/
+  application/
+    capture-controller.ts
+    camera-session.ts
   core/
     model.ts
     update.ts
@@ -395,9 +412,9 @@ tests/
   e2e/
 ```
 
-過剰なlayer分割は避け、platform boundaryとpure coreの差が実際に存在する単位だけをdirectoryへ分ける。
+過剰なlayer分割は避け、effect lifecycle、platform boundary、pure coreの差が実際に存在する単位だけをdirectoryへ分ける。
 
-### 8.4 Core types
+### 8.5 Core types
 
 ```ts
 type Option<T> =
@@ -437,7 +454,7 @@ type CopyState =
 
 `Blob`はimmutableなopaque valueとしてcore modelへ保持してよい。`MediaStream`、`MediaStreamTrack`、`HTMLVideoElement`、Object URLはplatformまたはUI lifecycleに閉じ込める。
 
-### 8.5 Error model
+### 8.6 Error model
 
 ```ts
 type CameraError =

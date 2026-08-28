@@ -21,7 +21,7 @@ export type CameraDescriptor = Readonly<{
 export type CameraVideoSettings = Readonly<{
   widthPx: number;
   heightPx: number;
-  frameRate: number | null;
+  frameRate: Option<number>;
 }>;
 
 export type CaptureEntry = Readonly<{
@@ -31,7 +31,7 @@ export type CaptureEntry = Readonly<{
   widthPx: number;
   heightPx: number;
   png: Blob;
-  thumbnail: Blob;
+  thumbnail: Option<Blob>;
   byteLength: number;
 }>;
 

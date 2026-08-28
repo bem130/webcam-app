@@ -4,14 +4,14 @@ import { err, ok, type Result } from "../core/result";
 import { beginPngWrite, browserClipboardPort, type ClipboardPort, PNG_MIME } from "./clipboard";
 
 export type Dimensions = Readonly<{ width: number; height: number }>;
-export type EncodedCapture = Readonly<{
+export type CapturedImage = Readonly<{
   png: Blob;
-  thumbnail: Blob;
   width: number;
   height: number;
 }>;
 export type CaptureOperation = Readonly<{
-  encoded: Promise<Result<EncodedCapture, CaptureError>>;
+  captured: Promise<Result<CapturedImage, CaptureError>>;
+  thumbnail: Promise<Result<Blob, CaptureError>>;
   clipboard: Promise<Result<void, ClipboardError>>;
 }>;
 export type CaptureEncoder = Readonly<{
@@ -109,18 +109,19 @@ export function beginCaptureAndCopy(
   const png = encoder.encodePng(video);
   // Do not insert await/microtask/timer before this call: WebKit requires this user activation.
   const clipboard = beginPngWrite(png, clipboardPort);
-  const encoded = png
-    .then(async (blob): Promise<EncodedCapture> => ({
-      png: blob,
-      thumbnail: await encoder.encodeThumbnail(blob),
-      width,
-      height,
-    }))
+  const captured = png
+    .then((blob): CapturedImage => ({ png: blob, width, height }))
     .then(
       (value) => ok(value),
       (cause: unknown) => err(captureErrorFrom(cause)),
     );
-  return { encoded, clipboard };
+  const thumbnail = png
+    .then((blob) => encoder.encodeThumbnail(blob))
+    .then(
+      (value) => ok(value),
+      (cause: unknown) => err(captureErrorFrom(cause)),
+    );
+  return { captured, thumbnail, clipboard };
 }
 
 export function sourceDimensions(sourceWidth: number, sourceHeight: number): Dimensions {

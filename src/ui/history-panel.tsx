@@ -6,7 +6,7 @@ type HistoryPanelProps = Readonly<{
   open: boolean;
   entries: readonly CaptureEntry[];
   selected: CaptureId | null;
-  thumbnailUrl: (entry: CaptureEntry) => string;
+  thumbnailUrl: (entry: CaptureEntry) => string | null;
   detailUrl: (entry: CaptureEntry) => string;
   onClose: () => void;
   onSelect: (id: CaptureId | null) => void;
@@ -98,23 +98,32 @@ function HistoryGrid(props: HistoryPanelProps) {
   return (
     <>
       <div class="history-grid" aria-label="撮影画像">
-        {props.entries.map((entry) => (
-          <button
-            key={entry.id}
-            class="history-item"
-            type="button"
-            onClick={() => props.onSelect(entry.id)}
-          >
-            <img
-              src={props.thumbnailUrl(entry)}
-              alt={`${formatTime(entry.capturedAtEpochMs)}に撮影した画像`}
-            />
-            <span>{formatTime(entry.capturedAtEpochMs)}</span>
-            <small>
-              {entry.widthPx} × {entry.heightPx} · {formatBytes(entry.byteLength)}
-            </small>
-          </button>
-        ))}
+        {props.entries.map((entry) => {
+          const thumbnailUrl = props.thumbnailUrl(entry);
+          return (
+            <button
+              key={entry.id}
+              class="history-item"
+              type="button"
+              onClick={() => props.onSelect(entry.id)}
+            >
+              {thumbnailUrl === null ? (
+                <span class="history-thumbnail-pending" aria-label="プレビューを準備中">
+                  …
+                </span>
+              ) : (
+                <img
+                  src={thumbnailUrl}
+                  alt={`${formatTime(entry.capturedAtEpochMs)}に撮影した画像`}
+                />
+              )}
+              <span>{formatTime(entry.capturedAtEpochMs)}</span>
+              <small>
+                {entry.widthPx} × {entry.heightPx} · {formatBytes(entry.byteLength)}
+              </small>
+            </button>
+          );
+        })}
       </div>
       <button class="clear-button" type="button" onClick={props.onClear}>
         <TrashIcon />
