@@ -15,7 +15,8 @@
 | Phase | 内容                                                            | 状態             |
 | ----: | --------------------------------------------------------------- | ---------------- |
 |     1 | PWA installation                                                | 完了 (`4d2ef2b`) |
-|     2 | Full-resolution video-frame capture + resolution display        | 未着手           |
+|     2 | Full-resolution video-frame capture + resolution display        | 完了 (`14339ac`) |
+|   2.5 | Architecture and repository verification gates                  | 未着手           |
 |     3 | Native still capture via `ImageCapture` progressive enhancement | 未着手           |
 |     4 | Idle timeout core + hard camera suspend                         | 未着手           |
 |     5 | Screensaver + interaction-based resume                          | 未着手           |
@@ -24,6 +25,8 @@
 |     8 | Documentation + release hardening                               | 未着手           |
 
 各phaseは単独でbuild・test・deploy可能な状態で完了させる。複数phaseを一つのcommitへまとめず、phaseごとに実装、検証、diff review、commit、pushを行う。Phase 3の`ImageCapture`が利用できない環境でも、Phase 2のvideo-frame captureだけで完全に利用可能な状態を保つ。
+
+V2開発完了までは、本書をV2変更事項のnormative specificationとする。`docs/design.md`または既存実装と競合する場合は本書を優先し、各phaseで該当する`design.md` contractもincrementalに同期する。
 
 ## 2. V2全体の設計契約
 
@@ -52,7 +55,28 @@ ImageCapture非対応・capability取得失敗・takePhoto失敗
 
 `takePhoto()`はoptional progressive enhancementであり、camera開始、camera切替、video-frame captureを阻害してはならない。Clipboard writeは既存のWebKit user activation contractを維持し、最初の`await`より前にPNG Promiseを入れた`ClipboardItem`を書込み始める。
 
-### 2.3 解像度表示
+### 2.3 CaptureとClipboardの独立lifecycle
+
+captureとcopyは同じuser actionから開始するが、開始後のlifecycleは独立させる。
+
+```text
+shutter
+  ├─ ClipboardItem(Promise<PNG>)を同期的にwrite開始
+  │    └─ Clipboard success / failure transition
+  │
+  └─ camera source acquisition -> PNG encode
+       ├─ encode成功直後にhistory追加
+       ├─ thumbnail生成
+       └─ cameraはidle / background hard stop可能
+```
+
+- PNG encode成功後のhistory追加とcamera resource releaseはClipboard settlementを待たない。
+- Clipboard success / failureはencode / historyと独立したstate transitionとして処理する。
+- idle inhibitionはcamera source acquisition、still decode、PNG encode、camera switchの間だけ有効にする。
+- Clipboard write結果待ち、history追加後のUI feedback、thumbnail完成待ちはcameraを保持する理由にしない。
+- capture source / PNG encode失敗時はhistoryを追加せず、Clipboard側のfailure feedbackでcapture errorを上書きしない。
+
+### 2.4 解像度表示
 
 UIでは実測値とcapabilityを混同しない。
 
@@ -62,14 +86,15 @@ UIでは実測値とcapabilityを混同しない。
 - history entryには常に実際に生成したPNGのpixel dimensionsを表示する。
 - camera切替、idle復帰、track settings変更後に表示を更新する。
 
-### 2.4 Idle invariant
+### 2.5 Idle / background invariant
 
 - 初期timeoutは`10s`とし、選択肢は`10s`、`30s`、`1m`、`3m`、`5m`、`10m`、`off`に限定する。
 - timeout時はvideoを隠すだけでなく、全camera trackへ`stop()`を呼んでhardwareを解放する。
-- `copying`またはcapture operation進行中はidle transitionを延期し、完了後にtimerを再armする。
+- camera source acquisition、still decode、PNG encode中はidle transitionを延期し、PNG settlement後にtimerを再armする。Clipboard write settlementは待たない。
 - screensaverを解除する最初のinteractionはresume専用としてconsumeし、shutterや背後のcontrolを発火させない。
 - `pointerdown`、`keydown`、`wheel`をactivityとして扱い、`pointermove`はtimer reset対象にしない。
-- background suspendとidle suspendは理由を区別し、既存のPage Visibility lifecycleを壊さない。
+- backgroundとidleのどちらでも全trackへ`stop()`を呼び、camera hardware releaseをapplication contractにする。
+- backgroundとidleはresume triggerとUIが異なるためreasonを区別し、二重resumeやstale transactionを防ぐ。
 
 ## 3. Phase 1: PWA installation
 
@@ -117,9 +142,55 @@ Production端末での実installはPhase 8のmanual QAで最終確認する。
 - 既存のClipboard user activation順序とprivacy invariantを維持する。
 - `npm run verify`と`npm run test:e2e`が成功する。
 
+### 完了commit
+
+`14339ac feat: complete phase 2 full-resolution video capture`
+
+## 4.5 Phase 2.5: Architecture and repository verification gates
+
+V2のeffect surfaceを追加する前に、方針違反をCIで拒否できる構造へ移行する。
+
+### Repository gate
+
+- `main`をprotected branchにし、pull request経由だけで変更する。
+- GitHub Actionsの`Verify` checkをstrict required status checkにする。
+- administratorにもruleを適用し、force pushとbranch deletionを禁止する。
+- solo repositoryのためapproving review countは0とするが、PRとgreen checkは必須にする。
+- 以後のphaseは`codex/phase-N-*` branchへcommit / pushし、PRのrequired check成功後だけmergeする。
+
+### Architecture gate
+
+- architecture testで`src/core/**`からplatform / application / uiへのimportを禁止する。
+- `src/platform/**`からapplication / uiへのimportを禁止する。
+- capture、camera session、idleのimperative orchestrationを小さいcontrollerへ分割し、`App`へeffect lifecycleを追加し続けない。
+- Phase 2.5ではcapture controllerとcamera session boundaryを導入し、Phase 4前にidle controllerを独立追加できる形にする。
+- core actionの不存在表現を`Option`へ統一し、browser / DOM境界の`null`をcoreへ持ち込まない。
+
+### Verification semantics
+
+- `verify:source`をformat、lint、typecheck、unit / integration、buildのfast gateとする。
+- `verify:e2e`を全browser E2E gateとする。
+- `verify`は両方を実行するall gateとし、CIはbrowser install前後で同じ二つを明示実行する。
+- `skipLibCheck: false`で現在のdependency setが通るか確認し、成功すればfalseを維持する。失敗時だけ具体的なdependency errorを文書化して例外とする。
+
+### Capture lifecycle修正
+
+- 既存`Promise.all([operation.encoded, operation.clipboard])`を廃止する。
+- encode成功直後にhistoryを追加し、capture busy / idle inhibitionを解除する。
+- Clipboard resultは独立observerでcopy stateとfeedbackだけを更新する。
+- encode failureとClipboard failureの競合時はcapture errorを優先し、historyを作らない。
+
+### 自動検証
+
+- forbidden import fixtureがarchitecture testで失敗し、現行source graphは成功する。
+- encode完了後、未settled Clipboardを待たずhistory追加とcapture idle解除が起きる。
+- Clipboardが先にsettleしてもencode / history resultを変えない。
+- core action payloadに`CameraId | null`を残さない。
+- `npm run verify`がsourceとE2Eの両方を実行する。
+
 ### Commit
 
-`feat: complete phase 2 full-resolution video capture`
+`refactor: enforce phase 2.5 architecture gates`
 
 ## 5. Phase 3: Native still capture via ImageCapture
 
@@ -175,10 +246,10 @@ streaming -- timeout --> idleSuspended -- explicit resume --> requesting --> str
 
 - default `10s`のidle timerをpure core decisionとtimer adapterに分離する。
 - timeout時はcurrent camera IDを再開用に保持してから全trackを`stop()`し、stream referenceとvideo `srcObject`を解放する。
-- capture、Clipboard write、camera switch中はidle suspendしない。完了時点を新しいactivityとしてtimerを再armする。
+- camera source acquisition、still decode、PNG encode、camera switch中はidle suspendしない。PNG settlementを新しいactivityとしてtimerを再armし、Clipboard settlementは待たない。
 - `off`ではidle timerを作成しない。
 - Phase 4ではidle停止理由と「カメラを再開」actionを明示する最小UIを提供し、Phase 5でscreensaverへ拡張する。
-- backgroundによる既存suspendとidle hard stopを別reasonとして扱い、二重resumeやstale transactionを防ぐ。
+- background / idleの両方でhard stopしつつ別reasonとして扱い、二重resumeやstale transactionを防ぐ。
 
 ### 自動検証
 
