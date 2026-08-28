@@ -1,6 +1,6 @@
 import type { RefObject } from "preact";
 import { shouldMirrorPreview } from "../core/camera-selection";
-import type { CameraDescriptor, CameraId, CameraState } from "../core/model";
+import type { CameraDescriptor, CameraId, CameraState, CameraVideoSettings } from "../core/model";
 import { CameraIcon, ChevronIcon, SwapIcon } from "./icons";
 
 type CameraViewProps = Readonly<{
@@ -9,6 +9,7 @@ type CameraViewProps = Readonly<{
   cameraState: CameraState;
   cameras: readonly CameraDescriptor[];
   currentCamera: CameraDescriptor | null;
+  videoSettings: CameraVideoSettings | null;
   menuOpen: boolean;
   historyCount: number;
   latestThumbnailUrl: string | null;
@@ -30,6 +31,7 @@ export function CameraView(props: CameraViewProps) {
     cameraState,
     cameras,
     currentCamera,
+    videoSettings,
     menuOpen,
     historyCount,
     latestThumbnailUrl,
@@ -111,6 +113,17 @@ export function CameraView(props: CameraViewProps) {
             <span aria-hidden="true" />
             カメラ使用中
           </p>
+          {videoSettings !== null && (
+            <p class="camera-quality material" aria-label={qualityLabel(videoSettings)}>
+              <span>プレビュー / 撮影</span>
+              <strong>
+                {videoSettings.widthPx} × {videoSettings.heightPx}
+                {videoSettings.frameRate === null
+                  ? ""
+                  : ` · ${formatFrameRate(videoSettings.frameRate)} fps`}
+              </strong>
+            </p>
+          )}
         </header>
       )}
 
@@ -164,4 +177,14 @@ export function CameraView(props: CameraViewProps) {
       )}
     </section>
   );
+}
+
+function formatFrameRate(frameRate: number): string {
+  return Number.isInteger(frameRate) ? String(frameRate) : frameRate.toFixed(1);
+}
+
+function qualityLabel(settings: CameraVideoSettings): string {
+  const frameRate =
+    settings.frameRate === null ? "" : `、${formatFrameRate(settings.frameRate)} fps`;
+  return `プレビューと撮影の解像度 ${settings.widthPx} × ${settings.heightPx}${frameRate}`;
 }

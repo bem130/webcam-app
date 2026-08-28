@@ -1,6 +1,13 @@
 import type { CameraError, ClipboardError } from "./errors";
 import { addCapture, removeCapture, shouldWarnAboutMemory } from "./history";
-import type { AppModel, CameraDescriptor, CameraId, CaptureEntry, CaptureId } from "./model";
+import type {
+  AppModel,
+  CameraDescriptor,
+  CameraId,
+  CameraVideoSettings,
+  CaptureEntry,
+  CaptureId,
+} from "./model";
 import { none, some } from "./result";
 
 export type AppAction =
@@ -9,6 +16,7 @@ export type AppAction =
       type: "cameraStarted";
       current: CameraId | null;
       cameras: readonly CameraDescriptor[];
+      videoSettings: CameraVideoSettings | null;
     }>
   | Readonly<{ type: "cameraFailed"; error: CameraError }>
   | Readonly<{ type: "cameraSwitchStarted"; target: CameraId }>
@@ -17,6 +25,7 @@ export type AppAction =
       previous: CameraId | null;
       current: CameraId;
       cameras: readonly CameraDescriptor[];
+      videoSettings: CameraVideoSettings | null;
     }>
   | Readonly<{ type: "cameraSuspended" }>
   | Readonly<{ type: "cameraResumed" }>
@@ -33,7 +42,7 @@ export type AppAction =
 export function update(model: AppModel, action: AppAction): AppModel {
   switch (action.type) {
     case "cameraRequestStarted":
-      return { ...model, camera: { tag: "requesting" } };
+      return { ...model, camera: { tag: "requesting" }, videoSettings: none };
     case "cameraStarted":
       return {
         ...model,
@@ -42,9 +51,14 @@ export function update(model: AppModel, action: AppAction): AppModel {
           current: action.current === null ? none : some(action.current),
         },
         cameras: action.cameras,
+        videoSettings: action.videoSettings === null ? none : some(action.videoSettings),
       };
     case "cameraFailed":
-      return { ...model, camera: { tag: "blocked", error: action.error } };
+      return {
+        ...model,
+        camera: { tag: "blocked", error: action.error },
+        videoSettings: none,
+      };
     case "cameraSwitchStarted": {
       const current = model.camera.tag === "streaming" ? model.camera.current : none;
       return { ...model, camera: { tag: "switching", current, target: action.target } };
@@ -55,6 +69,7 @@ export function update(model: AppModel, action: AppAction): AppModel {
         camera: { tag: "streaming", current: some(action.current) },
         previousCamera: action.previous === null ? none : some(action.previous),
         cameras: action.cameras,
+        videoSettings: action.videoSettings === null ? none : some(action.videoSettings),
       };
     case "cameraSuspended":
       return model.camera.tag === "streaming"

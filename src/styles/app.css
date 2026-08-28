@@ -114,6 +114,28 @@
   box-shadow: 0 0 0 3px rgb(50 215 75 / 20%);
 }
 
+.camera-quality {
+  grid-row: 2;
+  grid-column: 2;
+  justify-self: center;
+  display: grid;
+  gap: 1px;
+  margin: 8px 0 0;
+  padding: 6px 11px;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  pointer-events: auto;
+}
+.camera-quality span {
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+.camera-quality strong {
+  font-variant-numeric: tabular-nums;
+}
+
 .camera-menu {
   position: absolute;
   top: calc(100% + 8px);

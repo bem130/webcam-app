@@ -19,13 +19,12 @@ export type CaptureEncoder = Readonly<{
   encodeThumbnail: (png: Blob) => Promise<Blob>;
 }>;
 
-const MAX_LONG_EDGE_PX = 1920;
 const THUMBNAIL_EDGE_PX = 320;
 
-export function calculateTargetDimensions(
+export function calculateContainedDimensions(
   sourceWidth: number,
   sourceHeight: number,
-  maxLongEdge = MAX_LONG_EDGE_PX,
+  maxLongEdge: number,
 ): Dimensions {
   if (sourceWidth <= 0 || sourceHeight <= 0 || maxLongEdge <= 0) return { width: 0, height: 0 };
   const scale = Math.min(1, maxLongEdge / Math.max(sourceWidth, sourceHeight));
@@ -36,31 +35,49 @@ export function calculateTargetDimensions(
 }
 
 export class CanvasCaptureEncoder {
-  readonly #frameCanvas = document.createElement("canvas");
-  readonly #thumbnailCanvas = document.createElement("canvas");
+  readonly #frameCanvas: HTMLCanvasElement;
+  readonly #thumbnailCanvas: HTMLCanvasElement;
+
+  constructor(
+    frameCanvas = document.createElement("canvas"),
+    thumbnailCanvas = document.createElement("canvas"),
+  ) {
+    this.#frameCanvas = frameCanvas;
+    this.#thumbnailCanvas = thumbnailCanvas;
+  }
 
   encodePng(video: HTMLVideoElement): Promise<Blob> {
-    const dimensions = calculateTargetDimensions(video.videoWidth, video.videoHeight);
+    const dimensions = sourceDimensions(video.videoWidth, video.videoHeight);
     if (dimensions.width === 0 || dimensions.height === 0) {
       return Promise.reject(taggedCaptureError({ tag: "frameNotReady" }));
     }
     const context = this.#frameCanvas.getContext("2d");
-    if (context === null) return Promise.reject(taggedCaptureError({ tag: "canvasUnavailable" }));
+    if (context === null) {
+      releaseCanvas(this.#frameCanvas);
+      return Promise.reject(taggedCaptureError({ tag: "canvasUnavailable" }));
+    }
     this.#frameCanvas.width = dimensions.width;
     this.#frameCanvas.height = dimensions.height;
     try {
       context.drawImage(video, 0, 0, dimensions.width, dimensions.height);
     } catch (cause) {
+      releaseCanvas(this.#frameCanvas);
       return Promise.reject(taggedCaptureError(mapEncodeFailure(cause)));
     }
-    return canvasToBlob(this.#frameCanvas, PNG_MIME, { tag: "pngEncodingFailed" });
+    return canvasToBlob(this.#frameCanvas, PNG_MIME, { tag: "pngEncodingFailed" }).finally(() =>
+      releaseCanvas(this.#frameCanvas),
+    );
   }
 
   async encodeThumbnail(png: Blob): Promise<Blob> {
     let bitmap: ImageBitmap | null = null;
     try {
       bitmap = await createImageBitmap(png);
-      const dimensions = calculateTargetDimensions(bitmap.width, bitmap.height, THUMBNAIL_EDGE_PX);
+      const dimensions = calculateContainedDimensions(
+        bitmap.width,
+        bitmap.height,
+        THUMBNAIL_EDGE_PX,
+      );
       const context = this.#thumbnailCanvas.getContext("2d");
       if (context === null) throw taggedCaptureError({ tag: "canvasUnavailable" });
       this.#thumbnailCanvas.width = dimensions.width;
@@ -88,7 +105,7 @@ export function beginCaptureAndCopy(
   encoder: CaptureEncoder = (sharedEncoder ??= new CanvasCaptureEncoder()),
   clipboardPort: ClipboardPort = browserClipboardPort(),
 ): CaptureOperation {
-  const { width, height } = calculateTargetDimensions(video.videoWidth, video.videoHeight);
+  const { width, height } = sourceDimensions(video.videoWidth, video.videoHeight);
   const png = encoder.encodePng(video);
   // Do not insert await/microtask/timer before this call: WebKit requires this user activation.
   const clipboard = beginPngWrite(png, clipboardPort);
@@ -104,6 +121,17 @@ export function beginCaptureAndCopy(
       (cause: unknown) => err(captureErrorFrom(cause)),
     );
   return { encoded, clipboard };
+}
+
+export function sourceDimensions(sourceWidth: number, sourceHeight: number): Dimensions {
+  return sourceWidth > 0 && sourceHeight > 0
+    ? { width: sourceWidth, height: sourceHeight }
+    : { width: 0, height: 0 };
+}
+
+function releaseCanvas(canvas: HTMLCanvasElement): void {
+  canvas.width = 1;
+  canvas.height = 1;
 }
 
 function canvasToBlob(

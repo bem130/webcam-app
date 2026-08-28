@@ -18,6 +18,12 @@ export type CameraDescriptor = Readonly<{
   facing: CameraFacing;
 }>;
 
+export type CameraVideoSettings = Readonly<{
+  widthPx: number;
+  heightPx: number;
+  frameRate: number | null;
+}>;
+
 export type CaptureEntry = Readonly<{
   id: CaptureId;
   capturedAtEpochMs: number;
@@ -50,6 +56,7 @@ export type AppModel = Readonly<{
   history: readonly CaptureEntry[];
   copy: CopyState;
   memoryWarningShown: boolean;
+  videoSettings: Option<CameraVideoSettings>;
 }>;
 
 export const initialModel: AppModel = {
@@ -59,4 +66,5 @@ export const initialModel: AppModel = {
   history: [],
   copy: { tag: "idle" },
   memoryWarningShown: false,
+  videoSettings: { tag: "none" },
 };

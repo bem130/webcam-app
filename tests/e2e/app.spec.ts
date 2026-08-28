@@ -105,6 +105,7 @@ test("captures, copies, retains history in memory, and clears it on reload", asy
   await page.getByRole("button", { name: "カメラを開始" }).click();
   const shutter = page.getByRole("button", { name: "撮影してClipboardへコピー" });
   await expect(shutter).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByLabel(/プレビューと撮影の解像度 \d+ × \d+/)).toBeVisible();
   await shutter.click();
   await expect(
     page.getByRole("status").filter({ hasText: "Clipboardにコピーしました。" }),

@@ -12,6 +12,7 @@ import {
 import { none } from "../core/result";
 import { update } from "../core/update";
 import {
+  cameraVideoSettings,
   currentCameraId,
   enumerateCameras,
   mapCameraError,
@@ -79,6 +80,7 @@ export function App() {
     video.srcObject = stream;
     await video.play();
     await waitForVideoFrame(video);
+    return cameraVideoSettings(stream);
   }, []);
 
   const startCamera = useCallback(async () => {
@@ -99,9 +101,14 @@ export function App() {
       return;
     }
     try {
-      await attachStream(result.value);
+      const videoSettings = await attachStream(result.value);
       const cameras = await enumerateCameras();
-      dispatch({ type: "cameraStarted", current: currentCameraId(result.value), cameras });
+      dispatch({
+        type: "cameraStarted",
+        current: currentCameraId(result.value),
+        cameras,
+        videoSettings,
+      });
     } catch (cause) {
       stopStream(result.value);
       streamRef.current = null;
@@ -132,13 +139,15 @@ export function App() {
       }
       if (requested.tag === "ok") {
         try {
-          await attachStream(requested.value);
+          const videoSettings = await attachStream(requested.value);
           const cameras = await enumerateCameras();
+          clearSwitchPlaceholder(placeholderRef.current);
           dispatch({
             type: "cameraSwitched",
             previous: oldId,
             current: currentCameraId(requested.value) ?? target,
             cameras,
+            videoSettings,
           });
           return;
         } catch {
@@ -155,9 +164,10 @@ export function App() {
         }
         if (restored.tag === "ok") {
           try {
-            await attachStream(restored.value);
+            const videoSettings = await attachStream(restored.value);
             const cameras = await enumerateCameras();
-            dispatch({ type: "cameraStarted", current: oldId, cameras });
+            clearSwitchPlaceholder(placeholderRef.current);
+            dispatch({ type: "cameraStarted", current: oldId, cameras, videoSettings });
             setFeedback({
               tone: "error",
               text: "選択したカメラへ切り替えられなかったため、元のカメラへ戻しました。",
@@ -171,6 +181,7 @@ export function App() {
       }
       const error: CameraError =
         requested.tag === "err" ? requested.error : { tag: "cameraUnavailable" };
+      clearSwitchPlaceholder(placeholderRef.current);
       dispatch({ type: "cameraFailed", error });
     },
     [attachStream, model.camera],
@@ -328,6 +339,7 @@ export function App() {
           cameraState={model.camera}
           cameras={model.cameras}
           currentCamera={currentCamera}
+          videoSettings={model.videoSettings.tag === "some" ? model.videoSettings.value : null}
           menuOpen={cameraMenuOpen}
           historyCount={model.history.length}
           latestThumbnailUrl={latestThumbnailUrl}
@@ -454,6 +466,12 @@ function drawSwitchPlaceholder(
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   canvas.getContext("2d")?.drawImage(video, 0, 0);
+}
+
+function clearSwitchPlaceholder(canvas: HTMLCanvasElement | null): void {
+  if (canvas === null) return;
+  canvas.width = 1;
+  canvas.height = 1;
 }
 
 function waitForVideoFrame(video: HTMLVideoElement): Promise<void> {

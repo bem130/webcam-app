@@ -474,12 +474,12 @@ const constraints: MediaStreamConstraints = {
   audio: false,
   video: {
     facingMode: { ideal: "environment" },
-    width: { ideal: 1920 },
-    height: { ideal: 1080 },
     frameRate: { ideal: 30, max: 30 },
   },
 };
 ```
+
+stream取得後、`MediaStreamTrack.getCapabilities()`がwidth / height rangeを公開する場合は、そのmaxを`applyConstraints()`のideal値としてbest-effortで要求する。失敗してもstream自体は破棄せず、browserがnegotiationしたsettingsを使う。
 
 `exact`を初回に使わない。希望cameraが存在しないだけでrequest全体が失敗することを避ける。`facingMode`の`user`はfront-facing、`environment`はrear-facingを意味する。[MDN: facingMode](https://developer.mozilla.org/en-US/docs/Web/API/MediaTrackConstraints/facingMode)
 
@@ -513,7 +513,7 @@ const constraints: MediaStreamConstraints = {
 | 項目 | 仕様 |
 | --- | --- |
 | MIME type | `image/png` |
-| Dimensions | source frameのaspect ratioを維持し、long edgeを最大1920 pxに縮小。upscaleしない。 |
+| Dimensions | 実際のsource frame dimensionsを維持し、application側でupscale / downscaleしない。 |
 | Crop | なし |
 | Metadata | Canvas再encodeによりsource metadataを引き継がない |
 | Orientation | 画面上の正立方向へnormalize |
@@ -524,7 +524,7 @@ PNGを採用する理由は、Async Clipboard APIでbrowser間の共通対応が
 ### 10.2 Encode
 
 - 一つのreusable off-DOM canvasを用いる。
-- source dimensionsからtarget dimensionsを純粋関数で算出する。
+- source dimensionsを検証し、original PNGには同じdimensionsを使う。thumbnailだけはlong edge 320 pxへ縮小する。
 - front previewのCSS transformをCanvasへ適用しない。
 - `drawImage(video, 0, 0, width, height)`後に`canvas.toBlob(..., "image/png")`を呼ぶ。
 - `toBlob`が`null`を返した場合は`pngEncodingFailed`とする。
@@ -703,7 +703,7 @@ Clipboard APIはbrowser間でpermission modelとuser activationの扱いが異�
 | --- | --- |
 | NFR-01 | production JavaScript initial transferをgzip 80 KiB以下に保つことを目標とする。 |
 | NFR-02 | camera permission許可からfirst live frameまで、device依存時間を除くapplication overheadを100 ms以下にする。 |
-| NFR-03 | 1920 px long-edge frameのshutterからhistory追加まで、reference mobile deviceでp95 700 ms以下を目標とする。 |
+| NFR-03 | browserがnegotiationしたsource frameのshutterからhistory追加まで、reference deviceでp95を計測し、解像度別に記録する。 |
 | NFR-04 | copy処理中のlong taskを50 ms未満へ分割し、UI feedbackを先にpaint可能にする。 |
 | NFR-05 | history gridでoriginal PNGをdecodeせずthumbnailを使う。 |
 | NFR-06 | background時にvideo trackをdisableし、不要なcamera使用と電力消費を抑える。 |
@@ -721,7 +721,7 @@ PNG encodeがmain threadを長く占有するbrowserでは、OffscreenCanvasのs
 - memory warning thresholdの境界値
 - quick swapの一台、二台、三台以上の挙動
 - device list更新時にcurrent deviceが消えた場合
-- source dimensionsからtarget dimensionsへの縮小計算
+- source dimensionsを維持するoriginal captureとthumbnail縮小の分離
 - front/rear mirror decision
 - 全error unionのexhaustive mapping
 

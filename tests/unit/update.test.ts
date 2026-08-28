@@ -22,6 +22,7 @@ describe("update", () => {
       type: "cameraStarted",
       current: cameraId("rear"),
       cameras: [],
+      videoSettings: { widthPx: 3840, heightPx: 2160, frameRate: 30 },
     });
     expect(streaming.camera.tag).toBe("streaming");
     const suspended = update(streaming, { type: "cameraSuspended" });
@@ -40,6 +41,7 @@ describe("update", () => {
       type: "cameraStarted",
       current: front,
       cameras: [],
+      videoSettings: null,
     });
     const switching = update(streaming, { type: "cameraSwitchStarted", target: rear });
     expect(switching.camera).toMatchObject({ tag: "switching", target: rear });
@@ -48,9 +50,14 @@ describe("update", () => {
       previous: front,
       current: rear,
       cameras: devices,
+      videoSettings: { widthPx: 1920, heightPx: 1080, frameRate: 29.97 },
     });
     expect(switched.camera).toEqual({ tag: "streaming", current: { tag: "some", value: rear } });
     expect(switched.previousCamera).toEqual({ tag: "some", value: front });
+    expect(switched.videoSettings).toEqual({
+      tag: "some",
+      value: { widthPx: 1920, heightPx: 1080, frameRate: 29.97 },
+    });
     expect(update(switched, { type: "devicesUpdated", cameras: [] }).cameras).toEqual([]);
   });
 
