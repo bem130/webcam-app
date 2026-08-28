@@ -70,14 +70,6 @@ export function CameraView(props: CameraViewProps) {
         class={`switch-placeholder${switching ? " is-visible" : ""}`}
         aria-hidden="true"
       />
-      {switching && (
-        <div class="switch-progress">
-          <span class="spinner" aria-hidden="true" />
-          <span class="sr-only">カメラを切り替えています</span>
-        </div>
-      )}
-      <div class={`capture-flash${flash ? " is-visible" : ""}`} aria-hidden="true" />
-
       {!inactive && (
         <header class="camera-topbar">
           <div class="camera-menu-wrap">
@@ -118,9 +110,9 @@ export function CameraView(props: CameraViewProps) {
               <span>プレビュー / 撮影</span>
               <strong>
                 {videoSettings.widthPx} × {videoSettings.heightPx}
-                {videoSettings.frameRate === null
+                {videoSettings.frameRate.tag === "none"
                   ? ""
-                  : ` · ${formatFrameRate(videoSettings.frameRate)} fps`}
+                  : ` · ${formatFrameRate(videoSettings.frameRate.value)} fps`}
               </strong>
             </p>
           )}
@@ -175,6 +167,14 @@ export function CameraView(props: CameraViewProps) {
           )}
         </footer>
       )}
+
+      {switching && (
+        <div class="switch-progress">
+          <span class="spinner" aria-hidden="true" />
+          <span class="sr-only">カメラを切り替えています</span>
+        </div>
+      )}
+      <div class={`capture-flash${flash ? " is-visible" : ""}`} aria-hidden="true" />
     </section>
   );
 }
@@ -185,6 +185,6 @@ function formatFrameRate(frameRate: number): string {
 
 function qualityLabel(settings: CameraVideoSettings): string {
   const frameRate =
-    settings.frameRate === null ? "" : `、${formatFrameRate(settings.frameRate)} fps`;
+    settings.frameRate.tag === "none" ? "" : `、${formatFrameRate(settings.frameRate.value)} fps`;
   return `プレビューと撮影の解像度 ${settings.widthPx} × ${settings.heightPx}${frameRate}`;
 }

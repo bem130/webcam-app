@@ -20,8 +20,10 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
-    "test:e2e": "playwright test",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build"
+    "test:e2e": "npm run verify:e2e",
+    "verify:source": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build",
+    "verify:e2e": "playwright test",
+    "verify": "npm run verify:source && npm run verify:e2e"
   },
   "dependencies": {
     "preact": "10.29.8"
@@ -31,6 +33,7 @@
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.62.1",
     "@preact/preset-vite": "2.10.6",
+    "@types/babel__core": "7.20.5",
     "@types/node": "26.4.0",
     "eslint": "10.9.1",
     "eslint-config-prettier": "10.1.8",

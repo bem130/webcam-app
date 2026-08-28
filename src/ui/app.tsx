@@ -1,4 +1,13 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "preact/hooks";
+import {
+  attachCameraStream,
+  clearSwitchPlaceholder,
+  drawSwitchPlaceholder,
+} from "../application/camera-session";
+import {
+  observeCaptureOperation,
+  type CaptureLifecycleEvent,
+} from "../application/capture-controller";
 import { chooseQuickSwapTarget } from "../core/camera-selection";
 import type { CameraError } from "../core/errors";
 import { historyByteLength, MEMORY_WARNING_BYTES } from "../core/history";
@@ -12,7 +21,6 @@ import {
 import { none } from "../core/result";
 import { update } from "../core/update";
 import {
-  cameraVideoSettings,
   currentCameraId,
   enumerateCameras,
   mapCameraError,
@@ -25,6 +33,7 @@ import { beginCaptureAndCopy } from "../platform/capture";
 import { beginPngWrite, browserClipboardPort, PNG_MIME } from "../platform/clipboard";
 import { bindDocumentLifecycle } from "../platform/lifecycle";
 import { ObjectUrlRegistry } from "../platform/object-url-registry";
+import { AppOverlayPlane } from "./app-overlay-plane";
 import { CameraView } from "./camera-view";
 import { ConfirmDialog } from "./confirm-dialog";
 import { ErrorView } from "./error-view";
@@ -67,20 +76,12 @@ export function App() {
     const video = videoRef.current;
     if (video === null) throw new Error("video-unavailable");
     streamRef.current = stream;
-    stream.getVideoTracks()[0]?.addEventListener(
-      "ended",
-      () => {
-        if (streamRef.current === stream) {
-          streamRef.current = null;
-          dispatch({ type: "cameraFailed", error: { tag: "streamEnded" } });
-        }
-      },
-      { once: true },
-    );
-    video.srcObject = stream;
-    await video.play();
-    await waitForVideoFrame(video);
-    return cameraVideoSettings(stream);
+    return attachCameraStream(video, stream, () => {
+      if (streamRef.current === stream) {
+        streamRef.current = null;
+        dispatch({ type: "cameraFailed", error: { tag: "streamEnded" } });
+      }
+    });
   }, []);
 
   const startCamera = useCallback(async () => {
@@ -119,8 +120,8 @@ export function App() {
   const switchCamera = useCallback(
     async (target: CameraId) => {
       if (model.camera.tag !== "streaming") return;
-      const oldId = model.camera.current.tag === "some" ? model.camera.current.value : null;
-      if (target === oldId) {
+      const oldId = model.camera.current;
+      if (oldId.tag === "some" && target === oldId.value) {
         setCameraMenuOpen(false);
         return;
       }
@@ -141,11 +142,12 @@ export function App() {
         try {
           const videoSettings = await attachStream(requested.value);
           const cameras = await enumerateCameras();
+          const requestedId = currentCameraId(requested.value);
           clearSwitchPlaceholder(placeholderRef.current);
           dispatch({
             type: "cameraSwitched",
             previous: oldId,
-            current: currentCameraId(requested.value) ?? target,
+            current: requestedId.tag === "some" ? requestedId.value : target,
             cameras,
             videoSettings,
           });
@@ -156,8 +158,8 @@ export function App() {
         }
       }
 
-      if (oldId !== null) {
-        const restored = await requestSpecificCamera(oldId);
+      if (oldId.tag === "some") {
+        const restored = await requestSpecificCamera(oldId.value);
         if (transaction !== switchTransactionRef.current) {
           if (restored.tag === "ok") stopStream(restored.value);
           return;
@@ -198,31 +200,43 @@ export function App() {
     window.setTimeout(() => setFlash(false), 75);
     dispatch({ type: "copyStarted", captureId: id });
     const operation = beginCaptureAndCopy(video);
-
-    void Promise.all([operation.encoded, operation.clipboard]).then(([encoded, clipboard]) => {
-      setCaptureBusy(false);
-      if (encoded.tag === "err") {
-        dispatch({ type: "copyDismissed" });
-        setFeedback({ tone: "error", text: captureErrorMessage(encoded.error) });
-        return;
-      }
-      const entry: CaptureEntry = {
-        id,
-        capturedAtEpochMs,
-        camera: captureCamera,
-        widthPx: encoded.value.width,
-        heightPx: encoded.value.height,
-        png: encoded.value.png,
-        thumbnail: encoded.value.thumbnail,
-        byteLength: encoded.value.png.size,
-      };
-      dispatch({ type: "captureAdded", entry });
-      if (clipboard.tag === "ok") {
-        dispatch({ type: "copySucceeded", captureId: id });
-        setFeedback({ tone: "success", text: "Clipboardにコピーしました。" });
-      } else {
-        dispatch({ type: "copyFailed", captureId: id, error: clipboard.error });
-        setFeedback({ tone: "error", text: clipboardErrorMessage(clipboard.error) });
+    observeCaptureOperation(id, operation, (event: CaptureLifecycleEvent) => {
+      switch (event.type) {
+        case "captureSucceeded": {
+          const entry: CaptureEntry = {
+            id,
+            capturedAtEpochMs,
+            camera: captureCamera,
+            widthPx: event.image.width,
+            heightPx: event.image.height,
+            png: event.image.png,
+            thumbnail: none,
+            byteLength: event.image.png.size,
+          };
+          setCaptureBusy(false);
+          dispatch({ type: "captureAdded", entry });
+          break;
+        }
+        case "captureFailed":
+          setCaptureBusy(false);
+          dispatch({ type: "copyDismissed" });
+          setFeedback({ tone: "error", text: captureErrorMessage(event.error) });
+          break;
+        case "thumbnailSucceeded":
+          dispatch({
+            type: "captureThumbnailAdded",
+            captureId: event.captureId,
+            thumbnail: event.thumbnail,
+          });
+          break;
+        case "clipboardSucceeded":
+          dispatch({ type: "copySucceeded", captureId: event.captureId });
+          setFeedback({ tone: "success", text: "Clipboardにコピーしました。" });
+          break;
+        case "clipboardFailed":
+          dispatch({ type: "copyFailed", captureId: event.captureId, error: event.error });
+          setFeedback({ tone: "error", text: clipboardErrorMessage(event.error) });
+          break;
       }
     });
   }, [captureBusy, model.camera]);
@@ -297,9 +311,9 @@ export function App() {
     const refresh = () => {
       void enumerateCameras().then((cameras) => {
         const activeStream = streamRef.current;
-        const activeId = activeStream === null ? null : currentCameraId(activeStream);
+        const activeId = activeStream === null ? none : currentCameraId(activeStream);
         dispatch({ type: "devicesUpdated", cameras });
-        if (activeId !== null && !cameras.some((camera) => camera.id === activeId)) {
+        if (activeId.tag === "some" && !cameras.some((camera) => camera.id === activeId.value)) {
           stopStream(streamRef.current);
           streamRef.current = null;
           dispatch({ type: "cameraFailed", error: { tag: "streamEnded" } });
@@ -322,7 +336,7 @@ export function App() {
 
   const latest = model.history[0];
   const latestThumbnailUrl =
-    latest === undefined ? null : thumbnailUrls.get(latest.id, latest.thumbnail);
+    latest?.thumbnail.tag === "some" ? thumbnailUrls.get(latest.id, latest.thumbnail.value) : null;
   const showMemoryWarning =
     model.memoryWarningShown &&
     historyByteLength(model.history) > MEMORY_WARNING_BYTES &&
@@ -382,42 +396,53 @@ export function App() {
         />
       )}
 
-      {feedback !== null && (
-        <div class={`status-pill status-pill--${feedback.tone}`} role="status" aria-live="polite">
-          <span>{feedback.text}</span>
-          <button
-            type="button"
-            aria-label="通知を閉じる"
-            title="通知を閉じる"
-            onClick={() => setFeedback(null)}
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {showMemoryWarning && (
-        <aside class="memory-warning" role="status">
-          <p>履歴が128 MiBを超えました。端末のメモリが少ない場合は履歴を消去してください。</p>
-          <button type="button" onClick={() => setHistoryOpen(true)}>
-            履歴を確認
-          </button>
-          <button
-            type="button"
-            aria-label="警告を閉じる"
-            title="警告を閉じる"
-            onClick={() => setMemoryNoticeDismissed(true)}
-          >
-            ×
-          </button>
-        </aside>
-      )}
+      <AppOverlayPlane
+        feedback={
+          feedback === null ? null : (
+            <div
+              class={`status-pill status-pill--${feedback.tone}`}
+              role="status"
+              aria-live="polite"
+            >
+              <span>{feedback.text}</span>
+              <button
+                type="button"
+                aria-label="通知を閉じる"
+                title="通知を閉じる"
+                onClick={() => setFeedback(null)}
+              >
+                ×
+              </button>
+            </div>
+          )
+        }
+        memoryWarning={
+          showMemoryWarning ? (
+            <aside class="memory-warning" role="status">
+              <p>履歴が128 MiBを超えました。端末のメモリが少ない場合は履歴を消去してください。</p>
+              <button type="button" onClick={() => setHistoryOpen(true)}>
+                履歴を確認
+              </button>
+              <button
+                type="button"
+                aria-label="警告を閉じる"
+                title="警告を閉じる"
+                onClick={() => setMemoryNoticeDismissed(true)}
+              >
+                ×
+              </button>
+            </aside>
+          ) : null
+        }
+      />
 
       <HistoryPanel
         open={historyOpen}
         entries={model.history}
         selected={selectedCapture}
-        thumbnailUrl={(entry) => thumbnailUrls.get(entry.id, entry.thumbnail)}
+        thumbnailUrl={(entry) =>
+          entry.thumbnail.tag === "some" ? thumbnailUrls.get(entry.id, entry.thumbnail.value) : null
+        }
         detailUrl={(entry) => detailUrls.get(entry.id, entry.png)}
         onClose={() => {
           setHistoryOpen(false);
@@ -455,45 +480,4 @@ function preflightMessage(): string | null {
   const context = document.createElement("canvas").getContext("2d");
   if (context === null) return "このブラウザでは画像を作成できません。";
   return null;
-}
-
-function drawSwitchPlaceholder(
-  video: HTMLVideoElement | null,
-  canvas: HTMLCanvasElement | null,
-): void {
-  if (video === null || canvas === null || video.videoWidth === 0 || video.videoHeight === 0)
-    return;
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext("2d")?.drawImage(video, 0, 0);
-}
-
-function clearSwitchPlaceholder(canvas: HTMLCanvasElement | null): void {
-  if (canvas === null) return;
-  canvas.width = 1;
-  canvas.height = 1;
-}
-
-function waitForVideoFrame(video: HTMLVideoElement): Promise<void> {
-  if (
-    video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
-    video.videoWidth > 0 &&
-    video.videoHeight > 0
-  ) {
-    return Promise.resolve();
-  }
-  return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => finish(() => reject(new Error("frame-timeout"))), 5000);
-    const ready = () => {
-      if (video.videoWidth > 0 && video.videoHeight > 0) finish(resolve);
-    };
-    const finish = (complete: () => void) => {
-      window.clearTimeout(timeout);
-      video.removeEventListener("loadeddata", ready);
-      video.removeEventListener("canplay", ready);
-      complete();
-    };
-    video.addEventListener("loadeddata", ready);
-    video.addEventListener("canplay", ready);
-  });
 }

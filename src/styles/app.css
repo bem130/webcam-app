@@ -7,6 +7,9 @@
   overflow: hidden;
   background: #000;
 }
+.app-overlay-plane {
+  display: contents;
+}
 
 .camera-stage,
 .camera-preview,
@@ -43,7 +46,6 @@
   opacity: 1;
 }
 .capture-flash {
-  z-index: 10;
   pointer-events: none;
   background: #fff;
   opacity: 0;
@@ -54,7 +56,6 @@
 
 .camera-topbar {
   position: absolute;
-  z-index: 4;
   top: 0;
   left: 0;
   display: grid;
@@ -164,7 +165,6 @@
 
 .camera-controls {
   position: absolute;
-  z-index: 3;
   right: 0;
   bottom: 0;
   left: 0;
@@ -249,7 +249,6 @@
 
 .switch-progress {
   position: absolute;
-  z-index: 5;
   top: 50%;
   left: 50%;
   display: grid;
@@ -285,7 +284,6 @@
 
 .welcome,
 .error-card {
-  z-index: 2;
   width: min(calc(100% - 32px), 520px);
   padding: clamp(24px, 6vw, 42px);
   border-radius: var(--sheet-radius);
@@ -352,7 +350,6 @@
 
 .status-pill {
   position: fixed;
-  z-index: 20;
   top: max(72px, calc(env(safe-area-inset-top) + 64px));
   left: 50%;
   display: flex;
@@ -388,7 +385,6 @@
 
 .memory-warning {
   position: fixed;
-  z-index: 21;
   right: 16px;
   bottom: max(16px, env(safe-area-inset-bottom));
   display: flex;
@@ -472,11 +468,19 @@
   text-align: left;
   background: #2c2c2e;
 }
-.history-item img {
+.history-item img,
+.history-thumbnail-pending {
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
   background: #000;
+}
+.history-thumbnail-pending {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--muted);
+  font-size: 1.5rem;
 }
 .history-item span,
 .history-item small {

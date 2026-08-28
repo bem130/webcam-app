@@ -54,12 +54,11 @@ Vite の development URL は通常 `http://localhost:5173/webcam-app/` です。
 ### 検証
 
 ```powershell
-npm.cmd run verify
 npx.cmd playwright install chromium firefox webkit
-npm.cmd run test:e2e
+npm.cmd run verify
 ```
 
-`verify` は format、lint、strict TypeScript、unit/integration test、production build を実行します。E2E は初期 permission UX、axe による WCAG A/AA 検査、small viewport、Chromium fake camera による capture/copy/history/no-network/no-storage/reload を確認します。
+`verify` は source gate (`format`、lint、strict TypeScript、unit/integration test、production build) と全browser E2Eをすべて実行します。短いfeedback loopには`npm.cmd run verify:source`、browserだけには`npm.cmd run verify:e2e`を使えます。E2E は初期 permission UX、axe による WCAG A/AA 検査、small viewport、Chromium fake camera による capture/copy/history/no-network/no-storage/reload を確認します。
 
 実機の camera/Clipboard/assistive technology は browser automation だけでは保証できません。release 前に [手動 QA](docs/manual-qa.md) を対象端末で実施してください。
 
@@ -72,6 +71,8 @@ npm.cmd run build
 出力は `dist/` です。Vite の `base` は GitHub project site 用の `/webcam-app/` に固定しています。GitHub repository の Settings → Pages → Build and deployment → Source を **GitHub Actions** に設定すると、`main` の verified build だけが `https://bem130.github.io/webcam-app/` へ配信されます。Pull request は検証だけを行い、deploy しません。
 
 workflow は GitHub 公式 actions のみを full commit SHA で固定し、deploy job だけへ Pages/OIDC の write permission を付与します。依存更新は Dependabot が確認します。
+
+`main`はprotected branchであり、管理者を含む直接push、force push、削除を禁止しています。変更はfeature branchからpull requestを作成し、strictなrequired check `Verify`が成功したものだけをlinear historyでmergeします。
 
 ## GitHub Pages の security 制約
 

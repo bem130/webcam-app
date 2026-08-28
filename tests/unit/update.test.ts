@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cameraId, captureId, initialModel, type CaptureEntry } from "../../src/core/model";
-import { none } from "../../src/core/result";
+import { none, some } from "../../src/core/result";
 import { update } from "../../src/core/update";
 
 const capture: CaptureEntry = {
@@ -10,7 +10,7 @@ const capture: CaptureEntry = {
   widthPx: 2,
   heightPx: 1,
   png: { size: 2 } as Blob,
-  thumbnail: { size: 1 } as Blob,
+  thumbnail: some({ size: 1 } as Blob),
   byteLength: 2,
 };
 
@@ -20,9 +20,9 @@ describe("update", () => {
     expect(requesting.camera.tag).toBe("requesting");
     const streaming = update(requesting, {
       type: "cameraStarted",
-      current: cameraId("rear"),
+      current: some(cameraId("rear")),
       cameras: [],
-      videoSettings: { widthPx: 3840, heightPx: 2160, frameRate: 30 },
+      videoSettings: some({ widthPx: 3840, heightPx: 2160, frameRate: some(30) }),
     });
     expect(streaming.camera.tag).toBe("streaming");
     const suspended = update(streaming, { type: "cameraSuspended" });
@@ -39,25 +39,24 @@ describe("update", () => {
     const devices = [{ id: rear, label: "Rear", facing: "environment" as const }];
     const streaming = update(initialModel, {
       type: "cameraStarted",
-      current: front,
+      current: some(front),
       cameras: [],
-      videoSettings: null,
+      videoSettings: none,
     });
     const switching = update(streaming, { type: "cameraSwitchStarted", target: rear });
     expect(switching.camera).toMatchObject({ tag: "switching", target: rear });
     const switched = update(switching, {
       type: "cameraSwitched",
-      previous: front,
+      previous: some(front),
       current: rear,
       cameras: devices,
-      videoSettings: { widthPx: 1920, heightPx: 1080, frameRate: 29.97 },
+      videoSettings: some({ widthPx: 1920, heightPx: 1080, frameRate: some(29.97) }),
     });
     expect(switched.camera).toEqual({ tag: "streaming", current: { tag: "some", value: rear } });
     expect(switched.previousCamera).toEqual({ tag: "some", value: front });
-    expect(switched.videoSettings).toEqual({
-      tag: "some",
-      value: { widthPx: 1920, heightPx: 1080, frameRate: 29.97 },
-    });
+    expect(switched.videoSettings).toEqual(
+      some({ widthPx: 1920, heightPx: 1080, frameRate: some(29.97) }),
+    );
     expect(update(switched, { type: "devicesUpdated", cameras: [] }).cameras).toEqual([]);
   });
 
@@ -71,6 +70,19 @@ describe("update", () => {
     });
     expect(failed.history).toEqual([capture]);
     expect(failed.copy.tag).toBe("failed");
+  });
+
+  it("adds a thumbnail after the original PNG enters history", () => {
+    const withoutThumbnail: CaptureEntry = { ...capture, thumbnail: none };
+    const withCapture = update(initialModel, { type: "captureAdded", entry: withoutThumbnail });
+    const thumbnail = new Blob(["thumbnail"]);
+    const updated = update(withCapture, {
+      type: "captureThumbnailAdded",
+      captureId: capture.id,
+      thumbnail,
+    });
+
+    expect(updated.history[0]?.thumbnail).toEqual(some(thumbnail));
   });
 
   it("supports individual removal and clear", () => {
