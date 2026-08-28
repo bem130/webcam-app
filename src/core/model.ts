@@ -36,18 +36,35 @@ export type PhotoCapabilityState =
 export type CapturePreference = "photoPreferred" | "videoFrame";
 export type CaptureRoute = "photo" | "videoFrame";
 export type ImageMimeType = `image/${string}`;
-export type CaptureTimingStage =
-  | "sourceAcquisition"
-  | "videoFrameEncode"
-  | "imageDecode"
-  | "clipboardEncode"
-  | "thumbnail"
-  | "clipboardSettle";
-export type CaptureTimingMeasurement = Readonly<{
-  stage: CaptureTimingStage;
-  elapsedMs: Option<number>;
+export type CaptureTimingDurationStage =
+  "sourceAcquisition" | "videoFrameEncode" | "imageDecode" | "clipboardEncode" | "thumbnail";
+export type CaptureTimingMilestone = "clipboardRepresentationReady" | "clipboardSettled";
+export type CaptureTimingMeasurement =
+  | Readonly<{
+      kind: "duration";
+      stage: CaptureTimingDurationStage;
+      durationMs: Option<number>;
+    }>
+  | Readonly<{
+      kind: "milestone";
+      milestone: CaptureTimingMilestone;
+      offsetFromShutterMs: Option<number>;
+    }>;
+export type CaptureDiagnostics = Readonly<{
+  durations: Readonly<Partial<Record<CaptureTimingDurationStage, Option<number>>>>;
+  milestones: Readonly<Partial<Record<CaptureTimingMilestone, Option<number>>>>;
 }>;
-export type CaptureDiagnostics = Readonly<Partial<Record<CaptureTimingStage, Option<number>>>>;
+
+export const emptyCaptureDiagnostics: CaptureDiagnostics = { durations: {}, milestones: {} };
+
+export function browserClipboardDuration(diagnostics: CaptureDiagnostics): Option<number> {
+  const ready = diagnostics.milestones.clipboardRepresentationReady;
+  const settled = diagnostics.milestones.clipboardSettled;
+  if (ready?.tag !== "some" || settled?.tag !== "some" || settled.value < ready.value) {
+    return { tag: "none" };
+  }
+  return { tag: "some", value: settled.value - ready.value };
+}
 
 export type CaptureEntry = Readonly<{
   id: CaptureId;

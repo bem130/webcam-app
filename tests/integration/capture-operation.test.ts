@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+import type { CaptureTimingMeasurement } from "../../src/core/model";
 import { some } from "../../src/core/result";
-import { beginCaptureAndCopy, type CaptureEncoder } from "../../src/platform/capture";
+import {
+  beginCaptureAndCopy,
+  beginCapturedImageCopy,
+  type CaptureEncoder,
+} from "../../src/platform/capture";
 import type { ClipboardPort } from "../../src/platform/clipboard";
+import type { ImageProcessingPort, PreparedImage } from "../../src/platform/image-processing";
 import type { NativePhotoCapture } from "../../src/platform/native-photo";
 
 const video = { videoWidth: 640, videoHeight: 480 } as HTMLVideoElement;
@@ -58,11 +64,14 @@ describe("capture operation", () => {
     const clipboardPng = imageBlob("clipboard", "image/png");
     const conversion = deferred<Blob>();
     const encoder = fakeEncoder();
-    encoder.inspectImage.mockResolvedValue({ width: 8160, height: 6120 });
-    encoder.encodeBlobPng.mockReturnValue(conversion.promise);
+    const imageProcessing = fakeImageProcessing({
+      dimensions: { width: 8160, height: 6120 },
+      clipboardPng: conversion.promise,
+    });
     const nativePhoto = fakeNativePhoto(() => Promise.resolve(photo));
     const operation = beginCaptureAndCopy(video, {
       encoder,
+      imageProcessing,
       clipboardPort: clipboardAwaitingPayload(),
       nativePhoto: some(nativePhoto),
       preference: "photoPreferred",
@@ -79,7 +88,8 @@ describe("capture operation", () => {
       },
     });
     expect(encoder.encodeVideoFramePng).not.toHaveBeenCalled();
-    expect(encoder.encodeBlobPng).toHaveBeenCalledWith(photo);
+    expect(imageProcessing.prepare).toHaveBeenCalledWith(photo, true);
+    expect(encoder.encodeBlobPng).not.toHaveBeenCalled();
     expect(encoder.encodeThumbnail).not.toHaveBeenCalled();
     conversion.resolve(clipboardPng);
     await expect(operation.clipboard).resolves.toEqual({ tag: "ok", value: undefined });
@@ -89,9 +99,13 @@ describe("capture operation", () => {
   it("passes a native PNG directly to Clipboard without compatibility encoding", async () => {
     const photo = imageBlob("photo", "image/png");
     const encoder = fakeEncoder();
-    encoder.inspectImage.mockResolvedValue({ width: 4032, height: 3024 });
+    const imageProcessing = fakeImageProcessing({
+      dimensions: { width: 4032, height: 3024 },
+      clipboardPng: Promise.resolve(photo),
+    });
     const operation = beginCaptureAndCopy(video, {
       encoder,
+      imageProcessing,
       clipboardPort: clipboardAwaitingPayload(),
       nativePhoto: some(fakeNativePhoto(() => Promise.resolve(photo))),
       preference: "photoPreferred",
@@ -103,6 +117,40 @@ describe("capture operation", () => {
     });
     await expect(operation.clipboard).resolves.toEqual({ tag: "ok", value: undefined });
     expect(encoder.encodeBlobPng).not.toHaveBeenCalled();
+    expect(imageProcessing.prepare).toHaveBeenCalledWith(photo, false);
+  });
+
+  it("starts thumbnail encoding only after Clipboard success or failure settles", async () => {
+    const photo = imageBlob("photo", "image/png");
+    const clipboardSettlement = deferred<void>();
+    const encodeThumbnail = vi.fn(() => Promise.resolve(imageBlob("thumbnail", "image/jpeg")));
+    const imageProcessing: ImageProcessingPort = {
+      prepare: vi.fn(() =>
+        Promise.resolve({
+          dimensions: { width: 4, height: 3 },
+          clipboardPng: Promise.resolve({ blob: photo, durationMs: 0 }),
+          encodeThumbnail,
+          dispose: vi.fn(),
+        }),
+      ),
+      dispose: vi.fn(),
+    };
+    const operation = beginCaptureAndCopy(video, {
+      encoder: fakeEncoder(),
+      imageProcessing,
+      clipboardPort: {
+        createItem: vi.fn(() => ({}) as ClipboardItem),
+        write: vi.fn(() => clipboardSettlement.promise),
+      },
+      nativePhoto: some(fakeNativePhoto(() => Promise.resolve(photo))),
+    });
+
+    await expect(operation.captured).resolves.toMatchObject({ tag: "ok" });
+    expect(encodeThumbnail).not.toHaveBeenCalled();
+    clipboardSettlement.resolve(undefined);
+    await expect(operation.clipboard).resolves.toMatchObject({ tag: "ok" });
+    await expect(operation.thumbnail).resolves.toMatchObject({ tag: "ok" });
+    expect(encodeThumbnail).toHaveBeenCalledOnce();
   });
 
   it("falls back once to the live video frame without changing the preference", async () => {
@@ -128,9 +176,10 @@ describe("capture operation", () => {
     const encoder = fakeEncoder({
       video: Promise.resolve({ blob: png, width: 640, height: 480 }),
     });
-    encoder.inspectImage.mockRejectedValue(new Error("decode failed"));
+    const imageProcessing = fakeImageProcessing({ prepareError: new Error("decode failed") });
     const operation = beginCaptureAndCopy(video, {
       encoder,
+      imageProcessing,
       clipboardPort: successfulClipboard(),
       nativePhoto: some(fakeNativePhoto(() => Promise.resolve(imageBlob("photo", "image/jpeg")))),
       preference: "photoPreferred",
@@ -187,8 +236,10 @@ describe("capture operation", () => {
       clipboardPort: successfulClipboard(),
       clock: steppedClock(),
       observeTiming: (measurement) => {
-        stages.push(measurement.stage);
-        if (measurement.stage === "videoFrameEncode") throw new Error("debug UI failed");
+        stages.push(measurement.kind === "duration" ? measurement.stage : measurement.milestone);
+        if (measurement.kind === "duration" && measurement.stage === "videoFrameEncode") {
+          throw new Error("debug UI failed");
+        }
       },
     });
 
@@ -197,11 +248,65 @@ describe("capture operation", () => {
       expect.arrayContaining([
         "videoFrameEncode",
         "clipboardEncode",
+        "clipboardRepresentationReady",
         "thumbnail",
-        "clipboardSettle",
+        "clipboardSettled",
       ]),
     );
     await expect(operation.captured).resolves.toMatchObject({ tag: "ok" });
+  });
+
+  it("keeps stage durations distinct from shutter-relative Clipboard milestones", async () => {
+    const photo = imageBlob("photo", "image/jpeg");
+    const measurements: CaptureTimingMeasurement[] = [];
+    const imageProcessing: ImageProcessingPort = {
+      prepare: vi.fn(() =>
+        Promise.resolve({
+          dimensions: { width: 4, height: 3 },
+          clipboardPng: Promise.resolve({
+            blob: imageBlob("png", "image/png"),
+            durationMs: 321,
+          }),
+          encodeThumbnail: () => Promise.resolve(imageBlob("thumbnail", "image/jpeg")),
+          dispose: vi.fn(),
+        }),
+      ),
+      dispose: vi.fn(),
+    };
+    const operation = beginCaptureAndCopy(video, {
+      encoder: fakeEncoder(),
+      imageProcessing,
+      clipboardPort: clipboardAwaitingPayload(),
+      nativePhoto: some(fakeNativePhoto(() => Promise.resolve(photo))),
+      clock: steppedClock(),
+      observeTiming: (measurement) => measurements.push(measurement),
+    });
+
+    await Promise.all([operation.captured, operation.thumbnail, operation.clipboard]);
+    expect(measurements).toContainEqual({
+      kind: "duration",
+      stage: "clipboardEncode",
+      durationMs: some(321),
+    });
+    const milestones = measurements.filter((measurement) => measurement.kind === "milestone");
+    expect(milestones.map((measurement) => measurement.milestone)).toEqual(
+      expect.arrayContaining(["clipboardRepresentationReady", "clipboardSettled"]),
+    );
+    milestones.forEach((measurement) => expect(measurement.offsetFromShutterMs.tag).toBe("some"));
+  });
+
+  it("reuses the image-processing port for non-PNG history copies", async () => {
+    const image = imageBlob("photo", "image/jpeg");
+    const imageProcessing = fakeImageProcessing();
+    const encoder = fakeEncoder();
+    const write = beginCapturedImageCopy(
+      { blob: image, mimeType: "image/jpeg" },
+      { encoder, imageProcessing, clipboardPort: clipboardAwaitingPayload() },
+    );
+
+    await expect(write).resolves.toEqual({ tag: "ok", value: undefined });
+    expect(imageProcessing.prepare).toHaveBeenCalledWith(image, true);
+    expect(encoder.encodeBlobPng).not.toHaveBeenCalled();
   });
 });
 
@@ -212,6 +317,9 @@ type FakeEncoder = CaptureEncoder &
     encodeBlobPng: ReturnType<typeof vi.fn<CaptureEncoder["encodeBlobPng"]>>;
     encodeThumbnail: ReturnType<typeof vi.fn<CaptureEncoder["encodeThumbnail"]>>;
   }>;
+
+type FakeImageProcessing = ImageProcessingPort &
+  Readonly<{ prepare: ReturnType<typeof vi.fn<ImageProcessingPort["prepare"]>> }>;
 
 function fakeEncoder(
   options: {
@@ -227,6 +335,34 @@ function fakeEncoder(
     inspectImage: vi.fn(() => Promise.resolve({ width: 1, height: 1 })),
     encodeBlobPng: vi.fn(() => Promise.resolve(imageBlob("png", "image/png"))),
     encodeThumbnail: vi.fn(() => Promise.resolve(imageBlob("thumbnail", "image/jpeg"))),
+  };
+}
+
+function fakeImageProcessing(
+  options: Readonly<{
+    dimensions?: PreparedImage["dimensions"];
+    clipboardPng?: Promise<Blob>;
+    thumbnail?: Promise<Blob>;
+    prepareError?: Error;
+  }> = {},
+): FakeImageProcessing {
+  const prepared: PreparedImage = {
+    dimensions: options.dimensions ?? { width: 1, height: 1 },
+    clipboardPng: (
+      options.clipboardPng ?? Promise.resolve(imageBlob("clipboard", "image/png"))
+    ).then((blob) => ({ blob, durationMs: 5 })),
+    encodeThumbnail: vi.fn(
+      () => options.thumbnail ?? Promise.resolve(imageBlob("thumbnail", "image/jpeg")),
+    ),
+    dispose: vi.fn(),
+  };
+  return {
+    prepare: vi.fn(() =>
+      options.prepareError === undefined
+        ? Promise.resolve(prepared)
+        : Promise.reject(options.prepareError),
+    ),
+    dispose: vi.fn(),
   };
 }
 
