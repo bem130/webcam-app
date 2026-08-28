@@ -33,6 +33,47 @@ test("initial screen has no automatically detectable WCAG A/AA violations", asyn
   expect(results.violations).toEqual([]);
 });
 
+test("serves the install manifest and icons from the GitHub Pages scope", async ({
+  page,
+  request,
+}) => {
+  await page.goto("./");
+  const manifestHref = await page.locator('link[rel="manifest"]').getAttribute("href");
+  expect(manifestHref).toBe("/webcam-app/manifest.webmanifest");
+
+  const manifestResponse = await request.get(new URL(manifestHref!, page.url()).toString());
+  expect(manifestResponse.ok()).toBe(true);
+  const manifest = (await manifestResponse.json()) as {
+    start_url: string;
+    scope: string;
+    display: string;
+    icons: { src: string }[];
+  };
+  expect(manifest).toMatchObject({
+    start_url: "/webcam-app/",
+    scope: "/webcam-app/",
+    display: "standalone",
+  });
+
+  for (const icon of manifest.icons) {
+    const iconResponse = await request.get(new URL(icon.src, page.url()).toString());
+    expect(iconResponse.ok()).toBe(true);
+    expect(iconResponse.headers()["content-type"]).toBe("image/png");
+  }
+});
+
+test("has no Chromium installability errors", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "Installability diagnostics use Chromium CDP.");
+  await page.goto("./");
+  const session = await page.context().newCDPSession(page);
+  const manifest = await session.send("Page.getAppManifest");
+  const installability = await session.send("Page.getInstallabilityErrors");
+
+  expect(manifest.url).toBe("http://127.0.0.1:4173/webcam-app/manifest.webmanifest");
+  expect(manifest.errors).toEqual([]);
+  expect(installability.installabilityErrors).toEqual([]);
+});
+
 test("fits the primary action in a 320 by 568 viewport at 200 percent-equivalent width", async ({
   page,
 }) => {

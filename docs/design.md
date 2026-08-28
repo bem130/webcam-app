@@ -2,8 +2,8 @@
 
 | 項目 | 内容 |
 | --- | --- |
-| 文書状態 | 実装開始可能な初期設計 |
-| Version | 0.1.0 |
+| 文書状態 | PWA install拡張を含む実装設計 |
+| Version | 0.2.0 |
 | 作成日 | 2026-08-27 |
 | 仮称 | Camera Clipboard |
 | 対象 | mobile / tablet / desktop のmodern browser |
@@ -56,6 +56,7 @@ camera previewを表示し、shutterを押すと静止画をClipboardへコピ�
 | FR-10 | keyboard、screen reader、reduced motion対応 | 必須 |
 | FR-11 | camera接続・切断への追従 | 推奨 |
 | FR-12 | tabがbackgroundへ移った際のcamera suspendと復帰 | 推奨 |
+| FR-13 | browser / OS標準UIからのPWA install | 必須 |
 
 ### 2.2 v1に含めない機能
 
@@ -66,6 +67,7 @@ camera previewを表示し、shutterを押すと静止画をClipboardへコピ�
 - galleryからの画像import
 - OCR、QR code認識、document scan補正
 - Service Workerによる撮影画像のcache
+- offline利用とapp shellのService Worker cache
 - native app固有API、Apple Camera Controlへの対応
 
 ### 2.3 前提
@@ -665,7 +667,11 @@ productionではcamera API failureのdomain error tagだけをmemory上で扱い
 
 ### 14.6 Static asset cache
 
-HTML、JavaScript、CSS、icon等のapp shellは通常のHTTP cache対象としてよい。これは撮影画像の保存禁止と独立である。Service Workerはv1で導入しない。
+HTML、JavaScript、CSS、Web App Manifest、icon等のapp shellは通常のHTTP cache対象としてよい。これは撮影画像の保存禁止と独立である。
+
+PWA installにはWeb App Manifestを使い、`id`、`start_url`、`scope`をGitHub Pagesの`/webcam-app/`へ固定する。192×192 pxと512×512 pxのPNG icon、maskable icon、Apple touch iconを配信し、`display: "standalone"`で起動する。install操作はbrowser / OSの標準UIへ委ね、非標準のcustom install promptを必須経路にしない。
+
+Service Workerはinstallabilityの必須条件ではないため導入しない。offline対応は保証せず、Service Worker cacheを撮影画像の保存経路にしないprivacy contractを維持する。[MDN: Making PWAs installable](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable) / [W3C: Web Application Manifest](https://www.w3.org/TR/appmanifest/)
 
 ## 15. Browser support strategy
 
@@ -730,6 +736,7 @@ PNG encodeがmain threadを長く占有するbrowserでは、OffscreenCanvasのs
 
 ### 17.3 Browser E2E
 
+- manifestが読込まれ、install用metadataとiconが`/webcam-app/`配下で解決する
 - 初回permission grant / deny
 - cameraが一台、二台、三台以上
 - USB cameraの接続・切断
@@ -772,6 +779,8 @@ v1は次をすべて満たした時点で完成とする。
 - [ ] production `index.html`でmeta CSPとreferrer policyが有効であり、inline script / inline styleを含まない。
 - [ ] TypeScript、lint、unit、integration、E2E testをCIで通す。
 - [ ] `https://bem130.github.io/webcam-app/`でasset、camera、Clipboard copyが動作する。
+- [ ] Chromium、iOS / iPadOS、macOS Safariの標準UIからinstallでき、standaloneで起動する。
+- [ ] PWA install後もService Worker、Cache Storage、永続的な撮影履歴を作らない。
 - [ ] `vite.config.ts`の`base`が`/webcam-app/`である。
 - [ ] pull requestではdeployせず、`main`のverified buildだけをPagesへdeployする。
 - [ ] GitHub Pagesでは設定不能なsecurity headerとmeta CSPの保証範囲が文書化されている。
@@ -817,6 +826,7 @@ v1は次をすべて満たした時点で完成とする。
 | Framework | Preact | declarative UIと小さいbundleの均衡を取る。 |
 | Native/Wasm core | 採用しない | platform-dependent I/Oが支配的で、追加境界の利益が小さい。 |
 | Service Worker | 採用しない | v1の機能に不要で、保存契約の説明を単純に保てる。 |
+| PWA install | Manifestのみ | installabilityを提供しつつ、offline cacheとcustom promptをscope外に保つ。 |
 | Analytics | 採用しない | 画像utilityのprivacy surfaceを最小化する。 |
 | Hosting | GitHub Pages | backend不要のstatic appに適合し、HTTPS secure contextを提供する。 |
 | Pages publishing | GitHub Actions | Vite buildと検証を通過したartifactだけを公開する。 |
@@ -848,3 +858,5 @@ v1は次をすべて満たした時点で完成とする。
 - [GitHub Docs: Using custom workflows with GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)
 - [Vite: Deploying a Static Site](https://vite.dev/guide/static-deploy)
 - [W3C: Content Security Policy Level 3](https://www.w3.org/TR/CSP3/)
+- [MDN: Making PWAs installable](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable)
+- [W3C: Web Application Manifest](https://www.w3.org/TR/appmanifest/)

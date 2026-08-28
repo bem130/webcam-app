@@ -14,6 +14,18 @@ Camera Clipboard は、カメラの現在フレームを一度の操作で PNG �
 - background 時の camera suspend と document 破棄時の track stop
 - mobile bottom sheet / desktop side panel の responsive UI
 - keyboard、screen reader、reduced motion、forced colors への対応
+- browser / OS の標準 UI からの PWA install
+
+## PWA install
+
+Production URLをHTTPSで開き、browser / OSの標準UIからinstallできます。
+
+- Chrome / Edge desktop: address barのinstall icon、またはbrowser menuのinstall項目を使う。
+- Chrome on Android: browser menuの「ホーム画面に追加」またはinstall項目を使う。
+- iOS / iPadOS: browserの共有menuから「ホーム画面に追加」を選ぶ。
+- Safari on macOS: 共有buttonから「Dockに追加」を選ぶ。
+
+install後はstandalone windowで起動します。camera permissionとClipboardの扱い、reloadで履歴が消えるprivacy contractはbrowser tabで使う場合と同じです。Service Workerとoffline cacheは導入していないため、初回起動や再読込みにはnetwork接続が必要です。
 
 ## Privacy contract
 

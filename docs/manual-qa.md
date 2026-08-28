@@ -12,6 +12,18 @@
 
 各環境について browser/OS version、端末、実施日、結果、既知の差異を release note に残す。
 
+## PWA install
+
+- [ ] Chrome / Edge desktopでbrowser標準のinstall UIが表示され、installできる。
+- [ ] Chrome on Androidでbrowser menuからinstallまたはホーム画面追加ができる。
+- [ ] iOS / iPadOSの共有menuからホーム画面へ追加できる。
+- [ ] Safari on macOSの共有menuからDockへ追加できる。
+- [ ] installed appがstandalone表示で`/webcam-app/`から起動する。
+- [ ] installed appでcamera開始、capture、actual pasteが動作する。
+- [ ] installed appをreloadすると撮影履歴が消える。
+- [ ] offlineで再読込みした場合はoffline対応を装わず、browser / OS標準のnetwork errorになる。
+- [ ] iconがcircle、squircle、rounded rectangleでmaskされてもcamera symbolが欠けない。
+
 ## Camera と Clipboard
 
 - [ ] 初期表示だけでは camera permission が要求されない。

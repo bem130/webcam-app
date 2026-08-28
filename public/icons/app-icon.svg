@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Camera Clipboard">
+  <rect width="512" height="512" fill="#000000" />
+  <path
+    fill="#0a84ff"
+    d="M170 116h172l26 46h20c24 0 44 20 44 44v154c0 24-20 44-44 44H124c-24 0-44-20-44-44V206c0-24 20-44 44-44h20l26-46Z"
+  />
+  <circle cx="256" cy="278" r="88" fill="#ffffff" />
+  <circle cx="256" cy="278" r="50" fill="#000000" />
+</svg>

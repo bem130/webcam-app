@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 
 const html = readFileSync("dist/index.html", "utf8");
@@ -16,6 +16,19 @@ assert(referrerPosition > cspPosition, "referrer policy must follow CSP");
 assert(firstResourcePosition > referrerPosition, "policies must precede every resource");
 assert(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), "production HTML contains an inline script");
 assert(!/<style\b/i.test(html), "production HTML contains an inline style block");
+assert(
+  html.includes('rel="manifest" href="/webcam-app/manifest.webmanifest"'),
+  "production HTML is missing the Web App Manifest",
+);
+
+[
+  "dist/manifest.webmanifest",
+  "dist/icons/app-icon.svg",
+  "dist/icons/apple-touch-icon.png",
+  "dist/icons/icon-192.png",
+  "dist/icons/icon-512.png",
+  "dist/icons/icon-512-maskable.png",
+].forEach((path) => assert(existsSync(path), `production artifact is missing ${path}`));
 
 const resourceUrls = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map((match) => match[1]);
 assert(resourceUrls.length > 0, "production HTML has no generated resources");

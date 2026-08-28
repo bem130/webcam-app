@@ -1,0 +1,33 @@
+{
+  "id": "/webcam-app/",
+  "name": "Camera Clipboard",
+  "short_name": "Camera Clip",
+  "description": "カメラの現在フレームを端末へ保存せずClipboardへコピーします。",
+  "lang": "ja",
+  "start_url": "/webcam-app/",
+  "scope": "/webcam-app/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/webcam-app/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/webcam-app/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/webcam-app/icons/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
