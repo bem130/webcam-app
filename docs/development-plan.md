@@ -18,7 +18,7 @@
 |     2 | Full-resolution video-frame capture + resolution display        | 完了 (`14339ac`) |
 |   2.5 | Architecture and repository verification gates                  | 完了 (`ac16b78`) |
 |     3 | Native still capture via `ImageCapture` progressive enhancement | 完了 (`8b0a83a`) |
-|   3.5 | Capture pipeline measurement and worker optimization            | 未着手           |
+|   3.5 | Capture pipeline measurement and worker optimization            | 完了 (`5f0d043`) |
 |     4 | Idle timeout core + hard camera suspend                         | 未着手           |
 |     5 | Screensaver + interaction-based resume                          | 未着手           |
 |     6 | Preferences (idle timeout + capture mode)                       | 未着手           |
