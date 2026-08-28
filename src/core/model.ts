@@ -24,13 +24,41 @@ export type CameraVideoSettings = Readonly<{
   frameRate: Option<number>;
 }>;
 
+export type PhotoCaptureSettings = Readonly<{
+  widthPx: number;
+  heightPx: number;
+}>;
+export type PhotoCapabilityState =
+  | Readonly<{ tag: "checking" }>
+  | Readonly<{ tag: "unsupported" }>
+  | Readonly<{ tag: "supported"; settings: PhotoCaptureSettings }>;
+
+export type CapturePreference = "photoPreferred" | "videoFrame";
+export type CaptureRoute = "photo" | "videoFrame";
+export type ImageMimeType = `image/${string}`;
+export type CaptureTimingStage =
+  | "sourceAcquisition"
+  | "videoFrameEncode"
+  | "imageDecode"
+  | "clipboardEncode"
+  | "thumbnail"
+  | "clipboardSettle";
+export type CaptureTimingMeasurement = Readonly<{
+  stage: CaptureTimingStage;
+  elapsedMs: Option<number>;
+}>;
+export type CaptureDiagnostics = Readonly<Partial<Record<CaptureTimingStage, Option<number>>>>;
+
 export type CaptureEntry = Readonly<{
   id: CaptureId;
   capturedAtEpochMs: number;
   camera: Option<CameraId>;
   widthPx: number;
   heightPx: number;
-  png: Blob;
+  blob: Blob;
+  mimeType: ImageMimeType;
+  preference: CapturePreference;
+  route: CaptureRoute;
   thumbnail: Option<Blob>;
   byteLength: number;
 }>;
@@ -57,6 +85,8 @@ export type AppModel = Readonly<{
   copy: CopyState;
   memoryWarningShown: boolean;
   videoSettings: Option<CameraVideoSettings>;
+  photoCapability: PhotoCapabilityState;
+  capturePreference: CapturePreference;
 }>;
 
 export const initialModel: AppModel = {
@@ -67,4 +97,6 @@ export const initialModel: AppModel = {
   copy: { tag: "idle" },
   memoryWarningShown: false,
   videoSettings: { tag: "none" },
+  photoCapability: { tag: "checking" },
+  capturePreference: "photoPreferred",
 };

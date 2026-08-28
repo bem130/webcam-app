@@ -25,7 +25,10 @@ describe("capture dimensions", () => {
     const frameCanvas = fakeCanvas((callback) => callback(new Blob(["png"])));
     const encoder = new CanvasCaptureEncoder(frameCanvas, fakeCanvas());
 
-    await expect(encoder.encodePng(fakeVideo(7680, 4320))).resolves.toBeInstanceOf(Blob);
+    await expect(encoder.encodeVideoFramePng(fakeVideo(7680, 4320))).resolves.toMatchObject({
+      width: 7680,
+      height: 4320,
+    });
     expect(frameCanvas.width).toBe(1);
     expect(frameCanvas.height).toBe(1);
   });
@@ -34,7 +37,9 @@ describe("capture dimensions", () => {
     const frameCanvas = fakeCanvas((callback) => callback(null));
     const encoder = new CanvasCaptureEncoder(frameCanvas, fakeCanvas());
 
-    await expect(encoder.encodePng(fakeVideo(7680, 4320))).rejects.toThrow("pngEncodingFailed");
+    await expect(encoder.encodeVideoFramePng(fakeVideo(7680, 4320))).rejects.toThrow(
+      "pngEncodingFailed",
+    );
     expect(frameCanvas.width).toBe(1);
     expect(frameCanvas.height).toBe(1);
   });

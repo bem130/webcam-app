@@ -31,6 +31,12 @@
 - [ ] rear camera が利用可能な端末では初期候補になり、preview は crop されない。
 - [ ] front camera の preview だけが mirror 表示され、copy/paste した PNG は mirror されない。
 - [ ] shutter 一回で PNG が Clipboard へ入り、Notes、chat app、image editor へ実際に paste できる。
+- [ ] `ImageCapture`対応cameraではdefaultの「写真優先」が選ばれ、history detailsのactual routeが「写真API」になる。
+- [ ] 「動画フレーム」を選ぶと写真APIを呼ばず、actual routeが「動画フレーム」になる。reload後はdefaultの「写真優先」へ戻る。
+- [ ] 写真API非対応cameraでは「写真優先」がdisabledになり、video-frame captureが完全に利用できる。
+- [ ] 写真API失敗時は通常UIを不要なwarningで塞がずvideo frameへfallbackし、history detailsでactual routeを確認できる。
+- [ ] native JPEG等はhistoryでnative MIMEを維持し、ClipboardへはPNGとして実際にpasteできる。
+- [ ] 3000×4000と2448×3264を含むAndroid実機でstage timingを記録し、native artifact完成、Clipboard用PNG変換、thumbnail、Clipboard完了を区別できる。
 - [ ] copy の成功・失敗が text と screen reader live region で判別できる。
 - [ ] Clipboard permission を拒否しても画像が履歴へ残り、「再コピー」が動作する。
 - [ ] camera が一台のとき quick swap が表示されない。
@@ -41,7 +47,7 @@
 
 ## 履歴と privacy
 
-- [ ] history は newest first で、時刻、dimensions、概算 size を表示する。
+- [ ] history は newest first で、時刻、dimensions、概算 size、actual route、MIMEを表示する。
 - [ ] 個別削除と確認付き全消去が動作する。
 - [ ] reload 後に history が空になる（OS Clipboard に画像が残る場合は正常）。
 - [ ] DevTools Network を capture 前に clear し、capture/re-copy/delete 後に request が発生しない。

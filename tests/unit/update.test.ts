@@ -9,7 +9,10 @@ const capture: CaptureEntry = {
   camera: none,
   widthPx: 2,
   heightPx: 1,
-  png: { size: 2 } as Blob,
+  blob: { size: 2 } as Blob,
+  mimeType: "image/jpeg",
+  preference: "photoPreferred",
+  route: "photo",
   thumbnail: some({ size: 1 } as Blob),
   byteLength: 2,
 };
@@ -72,7 +75,7 @@ describe("update", () => {
     expect(failed.copy.tag).toBe("failed");
   });
 
-  it("adds a thumbnail after the original PNG enters history", () => {
+  it("adds a thumbnail after the original image artifact enters history", () => {
     const withoutThumbnail: CaptureEntry = { ...capture, thumbnail: none };
     const withCapture = update(initialModel, { type: "captureAdded", entry: withoutThumbnail });
     const thumbnail = new Blob(["thumbnail"]);
@@ -98,5 +101,28 @@ describe("update", () => {
     const copied = update(copying, { type: "copySucceeded", captureId: capture.id });
     expect(copied.copy).toEqual({ tag: "copied", captureId: capture.id });
     expect(update(copied, { type: "copyDismissed" }).copy).toEqual({ tag: "idle" });
+  });
+
+  it("keeps capture preference independent from native-photo availability", () => {
+    const preferred = update(initialModel, {
+      type: "capturePreferenceChanged",
+      preference: "photoPreferred",
+    });
+    const unsupported = update(preferred, {
+      type: "photoCapabilityUpdated",
+      capability: { tag: "unsupported" },
+    });
+    expect(unsupported.capturePreference).toBe("photoPreferred");
+    expect(unsupported.photoCapability).toEqual({ tag: "unsupported" });
+
+    const supported = update(unsupported, {
+      type: "photoCapabilityUpdated",
+      capability: { tag: "supported", settings: { widthPx: 8160, heightPx: 6120 } },
+    });
+    expect(supported.capturePreference).toBe("photoPreferred");
+    expect(supported.photoCapability).toEqual({
+      tag: "supported",
+      settings: { widthPx: 8160, heightPx: 6120 },
+    });
   });
 });

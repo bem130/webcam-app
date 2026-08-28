@@ -7,6 +7,8 @@ import type {
   CameraVideoSettings,
   CaptureEntry,
   CaptureId,
+  CapturePreference,
+  PhotoCapabilityState,
 } from "./model";
 import type { Option } from "./result";
 import { none, some } from "./result";
@@ -31,6 +33,8 @@ export type AppAction =
   | Readonly<{ type: "cameraSuspended" }>
   | Readonly<{ type: "cameraResumed" }>
   | Readonly<{ type: "devicesUpdated"; cameras: readonly CameraDescriptor[] }>
+  | Readonly<{ type: "photoCapabilityUpdated"; capability: PhotoCapabilityState }>
+  | Readonly<{ type: "capturePreferenceChanged"; preference: CapturePreference }>
   | Readonly<{ type: "captureAdded"; entry: CaptureEntry }>
   | Readonly<{ type: "captureThumbnailAdded"; captureId: CaptureId; thumbnail: Blob }>
   | Readonly<{ type: "copyStarted"; captureId: CaptureId }>
@@ -44,7 +48,12 @@ export type AppAction =
 export function update(model: AppModel, action: AppAction): AppModel {
   switch (action.type) {
     case "cameraRequestStarted":
-      return { ...model, camera: { tag: "requesting" }, videoSettings: none };
+      return {
+        ...model,
+        camera: { tag: "requesting" },
+        videoSettings: none,
+        photoCapability: { tag: "checking" },
+      };
     case "cameraStarted":
       return {
         ...model,
@@ -54,16 +63,22 @@ export function update(model: AppModel, action: AppAction): AppModel {
         },
         cameras: action.cameras,
         videoSettings: action.videoSettings,
+        photoCapability: { tag: "checking" },
       };
     case "cameraFailed":
       return {
         ...model,
         camera: { tag: "blocked", error: action.error },
         videoSettings: none,
+        photoCapability: { tag: "unsupported" },
       };
     case "cameraSwitchStarted": {
       const current = model.camera.tag === "streaming" ? model.camera.current : none;
-      return { ...model, camera: { tag: "switching", current, target: action.target } };
+      return {
+        ...model,
+        camera: { tag: "switching", current, target: action.target },
+        photoCapability: { tag: "checking" },
+      };
     }
     case "cameraSwitched":
       return {
@@ -72,6 +87,7 @@ export function update(model: AppModel, action: AppAction): AppModel {
         previousCamera: action.previous,
         cameras: action.cameras,
         videoSettings: action.videoSettings,
+        photoCapability: { tag: "checking" },
       };
     case "cameraSuspended":
       return model.camera.tag === "streaming"
@@ -83,6 +99,13 @@ export function update(model: AppModel, action: AppAction): AppModel {
         : model;
     case "devicesUpdated":
       return { ...model, cameras: action.cameras };
+    case "photoCapabilityUpdated":
+      return {
+        ...model,
+        photoCapability: action.capability,
+      };
+    case "capturePreferenceChanged":
+      return { ...model, capturePreference: action.preference };
     case "captureAdded": {
       const history = addCapture(model.history, action.entry);
       return {

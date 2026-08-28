@@ -5,6 +5,7 @@ declare global {
   interface Window {
     __clipboardWriteCount: number;
     __cameraRequestCount: number;
+    __photoTakeCount: number;
     __objectUrlCreateCount: number;
     __objectUrlRevokeCount: number;
   }
@@ -105,7 +106,7 @@ test("captures, copies, retains history in memory, and clears it on reload", asy
   await page.getByRole("button", { name: "カメラを開始" }).click();
   const shutter = page.getByRole("button", { name: "撮影してClipboardへコピー" });
   await expect(shutter).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByLabel(/プレビューと撮影の解像度 \d+ × \d+/)).toBeVisible();
+  await expect(page.getByLabel(/プレビューの解像度 \d+ × \d+/)).toBeVisible();
   await shutter.click();
   await expect(
     page.getByRole("status").filter({ hasText: "Clipboardにコピーしました。" }),
@@ -163,6 +164,69 @@ test("keeps the captured image in history when Clipboard write fails", async ({
     page.getByRole("status").filter({ hasText: "Clipboardへの書込みが許可されませんでした。" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "履歴を開く（1件）" })).toBeVisible();
+});
+
+test("prefers native still capture and allows an explicit video-frame choice", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "The native still adapter is deterministic in Chromium.");
+  await installImageCaptureMock(page);
+  await installClipboardMock(page);
+  await page.goto("./");
+  await page.getByRole("button", { name: "カメラを開始" }).click();
+
+  const preference = page.getByRole("combobox", { name: "撮影方式" });
+  await expect(preference).toHaveValue("photoPreferred");
+  await expect(page.getByText("撮影 最大", { exact: true })).toBeVisible();
+  const shutter = page.getByRole("button", { name: "撮影してClipboardへコピー" });
+  await shutter.click();
+  await expect.poll(() => page.evaluate(() => window.__photoTakeCount)).toBe(1);
+  await page.getByRole("button", { name: "履歴を開く（1件）" }).click();
+  await page.getByRole("button", { name: /に撮影した画像/ }).click();
+  await expect(page.getByText("写真API", { exact: true })).toBeVisible();
+  await expect(page.getByText("image/png", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("端末内の処理時間", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "履歴を閉じる" }).click();
+  await preference.selectOption("videoFrame");
+  await shutter.click();
+  await expect(page.getByRole("button", { name: "履歴を開く（2件）" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__photoTakeCount)).toBe(1);
+});
+
+test("disables the photo option and uses video frame when unsupported", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== "chromium",
+    "The deterministic fake camera is configured for Chromium.",
+  );
+  await page.addInitScript(() => {
+    Object.defineProperty(globalThis, "ImageCapture", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  await installClipboardMock(page);
+  await page.goto("./");
+  await page.getByRole("button", { name: "カメラを開始" }).click();
+
+  const preference = page.getByRole("combobox", { name: "撮影方式" });
+  await expect(preference).toHaveValue("videoFrame");
+  await expect
+    .poll(() =>
+      preference
+        .locator('option[value="photoPreferred"]')
+        .evaluate((option: HTMLOptionElement) => option.disabled),
+    )
+    .toBe(true);
+  await expect(page.getByText("このカメラでは写真APIを利用できません")).toBeVisible();
+  await page.getByRole("button", { name: "撮影してClipboardへコピー" }).click();
+  await page.getByRole("button", { name: "履歴を開く（1件）" }).click();
+  await page.getByRole("button", { name: /に撮影した画像/ }).click();
+  await expect(page.getByText("動画フレーム", { exact: true }).last()).toBeVisible();
 });
 
 async function installPlatformSpies(page: Page): Promise<void> {
@@ -230,6 +294,41 @@ async function installClipboardMock(page: Page, writeSucceeds = true): Promise<v
       },
     });
   }, writeSucceeds);
+}
+
+async function installImageCaptureMock(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    window.__photoTakeCount = 0;
+    class FakeImageCapture {
+      getPhotoCapabilities() {
+        return Promise.resolve({
+          imageWidth: { min: 1, max: 4, step: 1 },
+          imageHeight: { min: 1, max: 3, step: 1 },
+        });
+      }
+
+      takePhoto() {
+        window.__photoTakeCount += 1;
+        const canvas = document.createElement("canvas");
+        canvas.width = 4;
+        canvas.height = 3;
+        const context = canvas.getContext("2d");
+        if (context === null) return Promise.reject(new Error("canvas unavailable"));
+        context.fillStyle = "#4a90e2";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        return new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((blob) => {
+            if (blob === null) reject(new Error("photo encode failed"));
+            else resolve(blob);
+          }, "image/png");
+        });
+      }
+    }
+    Object.defineProperty(globalThis, "ImageCapture", {
+      configurable: true,
+      value: FakeImageCapture,
+    });
+  });
 }
 
 async function storageIsEmpty(page: Page): Promise<boolean> {

@@ -69,6 +69,13 @@ describe("architecture dependency contract", () => {
 
     expect(backToFront.every((index) => index >= 0)).toBe(true);
     expect(backToFront).toEqual([...backToFront].sort((left, right) => left - right));
+
+    const topbarBackToFront = [
+      'class="capture-preference material"',
+      'class="camera-menu-wrap"',
+    ].map((token) => cameraView.indexOf(token));
+    expect(topbarBackToFront.every((index) => index >= 0)).toBe(true);
+    expect(topbarBackToFront).toEqual([...topbarBackToFront].sort((left, right) => left - right));
   });
 });
 
