@@ -41,6 +41,7 @@ export type CapturedImage = Readonly<{
 }>;
 
 export type CaptureOperation = Readonly<{
+  cameraSourceSettled: Promise<void>;
   captured: Promise<Result<CapturedImage, CaptureError>>;
   thumbnail: Promise<Result<Blob, CaptureError>>;
   clipboard: Promise<Result<void, ClipboardError>>;
@@ -220,6 +221,8 @@ export function beginCaptureAndCopy(
   const preference = dependencies.preference ?? "photoPreferred";
   const clock = dependencies.clock ?? defaultClock;
   const observeTiming = dependencies.observeTiming ?? ignoreTiming;
+  const cameraSource = deferred<void>();
+  const settleCameraSource = once(() => cameraSource.resolve(undefined));
 
   const shutterStartedAt = clock();
   const source = captureSource(
@@ -230,6 +233,7 @@ export function beginCaptureAndCopy(
     preference,
     clock,
     observeTiming,
+    settleCameraSource,
   );
   const captured = source.then(
     (value) => ok(value.image),
@@ -262,7 +266,7 @@ export function beginCaptureAndCopy(
       (cause: unknown) => err(captureErrorFrom(cause)),
     );
 
-  return { captured, thumbnail, clipboard };
+  return { cameraSourceSettled: cameraSource.promise, captured, thumbnail, clipboard };
 }
 
 export function beginCapturedImageCopy(
@@ -306,9 +310,17 @@ async function captureSource(
   preference: CapturePreference,
   clock: () => number,
   observeTiming: (measurement: CaptureTimingMeasurement) => void,
+  settleCameraSource: () => void,
 ): Promise<CaptureSource> {
   if (preference === "videoFrame" || nativePhoto.tag === "none") {
-    return captureVideoFrame(video, encoder, imageProcessing, clock, observeTiming);
+    return captureVideoFrame(
+      video,
+      encoder,
+      imageProcessing,
+      clock,
+      observeTiming,
+      settleCameraSource,
+    );
   }
 
   const sourceStartedAt = clock();
@@ -318,35 +330,39 @@ async function captureSource(
   } catch {
     recordDuration(observeTiming, "sourceAcquisition", some(elapsed(clock, sourceStartedAt)));
     if (nativePhoto.value.track.readyState !== "live") {
+      settleCameraSource();
       throw taggedCaptureError({ tag: "photoCaptureFailed" });
     }
-    return captureVideoFrame(video, encoder, imageProcessing, clock, observeTiming);
+    return captureVideoFrame(
+      video,
+      encoder,
+      imageProcessing,
+      clock,
+      observeTiming,
+      settleCameraSource,
+    );
   }
   recordDuration(observeTiming, "sourceAcquisition", some(elapsed(clock, sourceStartedAt)));
+  settleCameraSource();
 
+  const mimeType = imageMimeType(nativeBlob);
+  const decodeStartedAt = clock();
   try {
-    const mimeType = imageMimeType(nativeBlob);
-    const decodeStartedAt = clock();
-    try {
-      const prepared = await imageProcessing.prepare(nativeBlob, mimeType !== PNG_MIME);
-      return {
-        image: {
-          blob: nativeBlob,
-          mimeType,
-          width: prepared.dimensions.width,
-          height: prepared.dimensions.height,
-          route: "photo",
-        },
-        clipboardPng: prepared.clipboardPng,
-        encodeThumbnail: prepared.encodeThumbnail,
-        dispose: prepared.dispose,
-      };
-    } finally {
-      recordDuration(observeTiming, "imageDecode", some(elapsed(clock, decodeStartedAt)));
-    }
-  } catch (cause) {
-    if (nativePhoto.value.track.readyState !== "live") throw cause;
-    return captureVideoFrame(video, encoder, imageProcessing, clock, observeTiming);
+    const prepared = await imageProcessing.prepare(nativeBlob, mimeType !== PNG_MIME);
+    return {
+      image: {
+        blob: nativeBlob,
+        mimeType,
+        width: prepared.dimensions.width,
+        height: prepared.dimensions.height,
+        route: "photo",
+      },
+      clipboardPng: prepared.clipboardPng,
+      encodeThumbnail: prepared.encodeThumbnail,
+      dispose: prepared.dispose,
+    };
+  } finally {
+    recordDuration(observeTiming, "imageDecode", some(elapsed(clock, decodeStartedAt)));
   }
 }
 
@@ -356,29 +372,34 @@ async function captureVideoFrame(
   imageProcessing: ImageProcessingPort,
   clock: () => number,
   observeTiming: (measurement: CaptureTimingMeasurement) => void,
+  settleCameraSource: () => void,
 ): Promise<CaptureSource> {
-  const image = await imageProcessing.processVideoFrame(
-    video,
-    () => encoder.encodeVideoFramePng(video, clock),
-    clock,
-  );
-  recordDuration(observeTiming, "videoFrameAcquire", some(image.durations.videoFrameAcquire));
-  recordDuration(observeTiming, "videoFrameTransfer", image.durations.videoFrameTransfer);
-  recordDuration(observeTiming, "videoFrameRaster", some(image.durations.videoFrameRaster));
-  recordDuration(observeTiming, "videoFramePngEncode", some(image.durations.videoFramePngEncode));
-  const capturedImage = {
-    blob: image.blob,
-    mimeType: imageMimeType(image.blob),
-    width: image.width,
-    height: image.height,
-    route: "videoFrame" as const,
-  };
-  return {
-    image: capturedImage,
-    clipboardPng: Promise.resolve({ blob: image.blob, durationMs: 0 }),
-    encodeThumbnail: () => encoder.encodeThumbnail(image.blob),
-    dispose: () => undefined,
-  };
+  try {
+    const image = await imageProcessing.processVideoFrame(
+      video,
+      () => encoder.encodeVideoFramePng(video, clock),
+      clock,
+    );
+    recordDuration(observeTiming, "videoFrameAcquire", some(image.durations.videoFrameAcquire));
+    recordDuration(observeTiming, "videoFrameTransfer", image.durations.videoFrameTransfer);
+    recordDuration(observeTiming, "videoFrameRaster", some(image.durations.videoFrameRaster));
+    recordDuration(observeTiming, "videoFramePngEncode", some(image.durations.videoFramePngEncode));
+    const capturedImage = {
+      blob: image.blob,
+      mimeType: imageMimeType(image.blob),
+      width: image.width,
+      height: image.height,
+      route: "videoFrame" as const,
+    };
+    return {
+      image: capturedImage,
+      clipboardPng: Promise.resolve({ blob: image.blob, durationMs: 0 }),
+      encodeThumbnail: () => encoder.encodeThumbnail(image.blob),
+      dispose: () => undefined,
+    };
+  } finally {
+    settleCameraSource();
+  }
 }
 
 function compatibleClipboardPng(
@@ -511,3 +532,20 @@ function recordMilestone(
 }
 
 function ignoreTiming(): void {}
+
+function deferred<T>(): Readonly<{ promise: Promise<T>; resolve: (value: T) => void }> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+function once(effect: () => void): () => void {
+  let completed = false;
+  return () => {
+    if (completed) return;
+    completed = true;
+    effect();
+  };
+}

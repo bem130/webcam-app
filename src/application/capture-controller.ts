@@ -4,6 +4,7 @@ import type { Result } from "../core/result";
 import type { CapturedImage, CaptureOperation } from "../platform/capture";
 
 export type CaptureLifecycleEvent =
+  | Readonly<{ type: "cameraSourceSettled"; captureId: CaptureId }>
   | Readonly<{ type: "captureSucceeded"; captureId: CaptureId; image: CapturedImage }>
   | Readonly<{ type: "captureFailed"; captureId: CaptureId; error: CaptureError }>
   | Readonly<{ type: "thumbnailSucceeded"; captureId: CaptureId; thumbnail: Blob }>
@@ -23,6 +24,10 @@ export function observeCaptureOperation(
 ): void {
   let captureState: CaptureState = "pending";
   let bufferedClipboard: Result<void, ClipboardError> | undefined;
+
+  void operation.cameraSourceSettled.then(() => {
+    emit({ type: "cameraSourceSettled", captureId });
+  });
 
   const emitClipboard = (result: Result<void, ClipboardError>) => {
     if (result.tag === "ok") emit({ type: "clipboardSucceeded", captureId });
