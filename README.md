@@ -11,6 +11,7 @@ Camera Clipboard は、写真APIまたはカメラの現在フレームから一
 - 対応cameraではnative写真APIを優先し、失敗時は最大解像度のvideo frameへfallback
 - 「写真優先」（default）と「動画フレーム」をsession内で選択可能
 - 履歴detailsで実際の撮影経路、native MIME、端末内のstage別処理時間を確認可能
+- video-frame captureのframe取得、raster準備、PNG encodeを独立して計測可能
 - コピーに失敗しても残る in-memory 履歴と再コピー
 - カメラ一覧からの選択と quick swap
 - 個別削除、確認付き全消去、Object URL の即時 revoke

@@ -227,6 +227,11 @@ test("disables the photo option and uses video frame when unsupported", async ({
   await page.getByRole("button", { name: "履歴を開く（1件）" }).click();
   await page.getByRole("button", { name: /に撮影した画像/ }).click();
   await expect(page.getByText("動画フレーム", { exact: true }).last()).toBeVisible();
+  await page.getByText("端末内の処理時間", { exact: true }).click();
+  await expect(page.getByText("動画フレーム取得", { exact: true })).toBeVisible();
+  await expect(page.getByText("動画フレームWorker handoff", { exact: true })).toBeVisible();
+  await expect(page.getByText("動画フレームraster準備", { exact: true })).toBeVisible();
+  await expect(page.getByText("動画フレームPNG encode", { exact: true })).toBeVisible();
 });
 
 async function installPlatformSpies(page: Page): Promise<void> {

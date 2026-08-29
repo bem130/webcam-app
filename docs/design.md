@@ -760,6 +760,10 @@ Android実測では3000×4000 video-frame PNGが約10秒、2448×3264が約2秒�
 
 native image processingはsupport検査後にpersistent Worker + `OffscreenCanvas.convertToBlob()`で実行し、unsupported / failure時はmain-thread Canvasへfallbackする。ただしSafariのClipboard user activationを維持するため、Clipboard write開始自体はUI event handler内に残す。ChromiumでWorker encode schedulingが異なることは性能上の根拠であり、correctness contractにはしない。
 
+video-frame routeのmain-thread baselineは、algorithmを変えず`videoFrameAcquire`、`videoFrameRaster`、`videoFramePngEncode`へdurationを分離する。baselineの`videoFrameAcquire`はvideo dimensions / readiness validation、`videoFrameRaster`は2D context取得と`drawImage(video, ...)`、`videoFramePngEncode`は`toBlob("image/png")`開始からBlob完成までを意味する。`videoFrameTransfer`はWorker handoffを行わないbaselineでは「未実行」と記録する。これらはdurationであり、shutter-relativeなClipboard milestoneではない。
+
+3000×4000 Android baselineのstage内訳をdeploy後に取得してからWorker prototypeのdefault採否を判断する。現行main-thread adapterは比較・fallback用に残し、測定前にWorker、`bitmaprenderer`、Wasmを高速と決め付けない。
+
 ## 17. Testing strategy
 
 ### 17.1 Unit tests

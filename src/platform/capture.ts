@@ -20,6 +20,17 @@ import {
 import type { NativePhotoCapture } from "./native-photo";
 
 export type Dimensions = Readonly<{ width: number; height: number }>;
+export type VideoFrameEncodeDurations = Readonly<{
+  videoFrameAcquire: number;
+  videoFrameRaster: number;
+  videoFramePngEncode: number;
+}>;
+export type EncodedVideoFrame = Readonly<{
+  blob: Blob;
+  width: number;
+  height: number;
+  durations: VideoFrameEncodeDurations;
+}>;
 export type CapturedImage = Readonly<{
   blob: Blob;
   mimeType: ImageMimeType;
@@ -37,7 +48,8 @@ export type CaptureOperation = Readonly<{
 export type CaptureEncoder = Readonly<{
   encodeVideoFramePng: (
     video: HTMLVideoElement,
-  ) => Promise<Readonly<{ blob: Blob; width: number; height: number }>>;
+    clock?: () => number,
+  ) => Promise<EncodedVideoFrame>;
   inspectImage: (image: Blob) => Promise<Dimensions>;
   encodeBlobPng: (image: Blob) => Promise<Blob>;
   encodeThumbnail: (image: Blob) => Promise<Blob>;
@@ -82,21 +94,32 @@ export class CanvasCaptureEncoder implements CaptureEncoder {
 
   async encodeVideoFramePng(
     video: HTMLVideoElement,
-  ): Promise<Readonly<{ blob: Blob; width: number; height: number }>> {
+    clock: () => number = defaultClock,
+  ): Promise<EncodedVideoFrame> {
+    const acquireStartedAt = clock();
     const dimensions = sourceDimensions(video.videoWidth, video.videoHeight);
+    const videoFrameAcquire = elapsed(clock, acquireStartedAt);
     if (dimensions.width === 0 || dimensions.height === 0) {
       throw taggedCaptureError({ tag: "frameNotReady" });
     }
     this.#frameCanvas.width = dimensions.width;
     this.#frameCanvas.height = dimensions.height;
     try {
+      const rasterStartedAt = clock();
       const context = this.#frameCanvas.getContext("2d");
       if (context === null) throw taggedCaptureError({ tag: "canvasUnavailable" });
       context.drawImage(video, 0, 0, dimensions.width, dimensions.height);
+      const videoFrameRaster = elapsed(clock, rasterStartedAt);
+      const pngStartedAt = clock();
       const blob = await canvasToBlob(this.#frameCanvas, PNG_MIME, {
         tag: "pngEncodingFailed",
       });
-      return { blob, ...dimensions };
+      const videoFramePngEncode = elapsed(clock, pngStartedAt);
+      return {
+        blob,
+        ...dimensions,
+        durations: { videoFrameAcquire, videoFrameRaster, videoFramePngEncode },
+      };
     } catch (cause) {
       if (isTaggedCaptureError(cause)) throw cause;
       throw taggedCaptureError(mapEncodeFailure(cause));
@@ -327,25 +350,24 @@ async function captureVideoFrame(
   clock: () => number,
   observeTiming: (measurement: CaptureTimingMeasurement) => void,
 ): Promise<CaptureSource> {
-  const startedAt = clock();
-  try {
-    const image = await encoder.encodeVideoFramePng(video);
-    const capturedImage = {
-      blob: image.blob,
-      mimeType: imageMimeType(image.blob),
-      width: image.width,
-      height: image.height,
-      route: "videoFrame" as const,
-    };
-    return {
-      image: capturedImage,
-      clipboardPng: Promise.resolve({ blob: image.blob, durationMs: 0 }),
-      encodeThumbnail: () => encoder.encodeThumbnail(image.blob),
-      dispose: () => undefined,
-    };
-  } finally {
-    recordDuration(observeTiming, "videoFrameEncode", some(elapsed(clock, startedAt)));
-  }
+  const image = await encoder.encodeVideoFramePng(video, clock);
+  recordDuration(observeTiming, "videoFrameAcquire", some(image.durations.videoFrameAcquire));
+  recordDuration(observeTiming, "videoFrameTransfer", none);
+  recordDuration(observeTiming, "videoFrameRaster", some(image.durations.videoFrameRaster));
+  recordDuration(observeTiming, "videoFramePngEncode", some(image.durations.videoFramePngEncode));
+  const capturedImage = {
+    blob: image.blob,
+    mimeType: imageMimeType(image.blob),
+    width: image.width,
+    height: image.height,
+    route: "videoFrame" as const,
+  };
+  return {
+    image: capturedImage,
+    clipboardPng: Promise.resolve({ blob: image.blob, durationMs: 0 }),
+    encodeThumbnail: () => encoder.encodeThumbnail(image.blob),
+    dispose: () => undefined,
+  };
 }
 
 function compatibleClipboardPng(
