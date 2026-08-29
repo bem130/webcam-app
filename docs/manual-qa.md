@@ -50,6 +50,10 @@
 - [ ] USB camera の接続・切断後に一覧と状態が更新される。
 - [ ] 他 app が camera を使用中の error と回復操作が理解できる。
 
+### Phase 3.6 Android実測記録
+
+2026-08-29、Chrome 150 / Android 10 / 3000×4000で通常URLのWorker 2Dを2回測定した。Clipboard完了は3093 msと2620 ms、Worker PNG encodeは1580 msと1682 msで、main-thread baselineの10862 ms / 9774 msから大幅に短縮した。履歴のactual processing routeはいずれも`Worker OffscreenCanvas (2D)`であり、fallbackは発生していない。追加の端末・被写体条件では上記checklistに従い3回以上の中央値を継続記録する。
+
 ## 履歴と privacy
 
 - [ ] history は newest first で、時刻、dimensions、概算 size、actual route、MIMEを表示する。
