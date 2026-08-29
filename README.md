@@ -15,13 +15,15 @@ Camera Clipboard は、写真APIまたはカメラの現在フレームから一
 - 対応browserではvideo frameもtransferable bitmapとしてpersistent Workerへ渡し、`OffscreenCanvas`でPNG化
 - コピーに失敗しても残る in-memory 履歴と再コピー
 - カメラ一覧からの選択と quick swap
+- 10秒間操作がない場合とbackground移行時のcamera track hard stop、明示的な再開
 - 個別削除、確認付き全消去、Object URL の即時 revoke
-- background 時の camera suspend と document 破棄時の track stop
 - mobile bottom sheet / desktop side panel の responsive UI
 - keyboard、screen reader、reduced motion、forced colors への対応
 - browser / OS の標準 UI からの PWA install
 
 native写真APIが返したencoded Blobは履歴用に再encodeせず保持します。Clipboardはbrowser間の互換性を優先して`image/png`を使うため、native形式がPNG以外の場合はClipboard用representationだけをPNGへ変換します。写真API非対応・capability取得失敗・撮影失敗時は、設定を書き換えずvideo frameへ静かにfallbackします。
+
+camera streamは操作が10秒ない場合、またはdocumentがbackgroundになった場合に全trackを`stop()`して解放します。画面へ戻っただけでは自動再取得せず、「カメラを再開」の明示操作で直前のcameraを要求します。撮影中はcamera sourceが必要な範囲だけidle停止を延期し、Clipboardやthumbnailの完了待ちではcameraを保持しません。
 
 対応browserではnative画像をpersistent Dedicated Workerで一度だけdecodeし、`OffscreenCanvas`からClipboard用PNGと320 px thumbnailを作ります。video frameはmain threadで`ImageBitmap`へsnapshotした後、同じWorkerへownership transferし、2D `OffscreenCanvas`でPNG化します。Worker処理が利用できない、または失敗した場合はmain-thread Canvasへfallbackします。thumbnail encodeはClipboard処理後に開始し、history自体は先に追加されます。
 

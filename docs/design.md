@@ -2,9 +2,9 @@
 
 | 項目 | 内容 |
 | --- | --- |
-| 文書状態 | V2 Phase 3 native still captureまでの実装設計 |
-| Version | 0.3.0 |
-| 作成日 | 2026-08-27 |
+| 文書状態 | V2 Phase 4 idle hard suspensionまでの実装設計 |
+| Version | 0.4.0 |
+| 作成日 | 2026-08-30 |
 | 仮称 | Camera Clipboard |
 | 対象 | mobile / tablet / desktop のmodern browser |
 | Repository | [`bem130/webcam-app`](https://github.com/bem130/webcam-app) |
@@ -189,12 +189,20 @@ mobileではbottom sheet、幅1024 px以上では右side panelとして表示す
 
 ### 4.6 Backgroundと復帰
 
-- `document.visibilityState === "hidden"`になったらvideo trackの`enabled`を`false`にし、cameraをsuspendする。
-- visibleへ戻ったらtrackを再enableする。
-- browserがtrackを終了していた場合は自動で新規permission promptを出さず、「カメラを再開」buttonを表示する。
+- `document.visibilityState === "hidden"`になったら全trackを`stop()`し、videoの`srcObject`とstream referenceを解放する。
+- visibleへ戻ってもcameraを自動取得しない。停止理由を表示し、明示的な「カメラを再開」操作で保持したcamera IDを再要求する。
+- background中のrequest完了や古いcamera switch結果はtransaction IDでstaleとして扱い、取得できたstreamを直ちにstopする。
 - `pagehide`またはdocument破棄時はtrackをstopする。
 
-Media Capture仕様では、すべての関連trackがmuted、disabled、stoppedの状態になった場合、user agentはdeviceを手放し、再enable時に再取得することが推奨される。この動作を利用し、background中のcamera indicatorと電力消費を抑える。[W3C: MediaStreamTrack lifecycle](https://www.w3.org/TR/mediacapture-streams/)
+backgroundではsoft disableに依存せず、applicationがhardware releaseを要求したことを`stop()`で保証する。[W3C: MediaStreamTrack lifecycle](https://www.w3.org/TR/mediacapture-streams/)
+
+### 4.7 Idle停止
+
+- camera stream開始からdefault 10秒のtimerをarmし、`pointerdown`、`keydown`、`wheel`でresetする。`pointermove`はactivityに含めない。
+- timeout時はbackgroundと同じhard stopを行うが、停止理由は`idle | background`として区別する。
+- native stillは`takePhoto()`がBlobを返すまで、video frameはWorkerまたはCanvasがPNG artifactを返すまでidle停止を抑止する。
+- native Blob取得後のdecode、Clipboard用PNG変換、Clipboard settlement、thumbnailはcameraを必要としないためidle停止を抑止しない。
+- camera切替中は旧streamを先にstopしてtimerを解除し、新stream接続後に新しいtimerをarmする。撮影中のcamera切替と撮影方式変更は無効化する。
 
 ## 5. Layout and visual design
 
@@ -270,9 +278,8 @@ stateDiagram-v2
     Streaming --> Switching: camera選択
     Switching --> Streaming: 切替または復帰成功
     Switching --> Blocked: 復帰失敗
-    Streaming --> Suspended: document hidden
-    Suspended --> Streaming: visible・再取得成功
-    Suspended --> Blocked: track終了
+    Streaming --> Suspended: idle timeout・document hidden
+    Suspended --> Requesting: 明示的な再開
     Blocked --> Requesting: 再試行
 ```
 
@@ -307,8 +314,9 @@ sequenceDiagram
     Runtime->>Camera: native stillまたはvideo frameを要求
     Runtime->>Clipboard: write(ClipboardItem(PNG representation Promise))
     Note over Runtime,Clipboard: awaitより前に呼ぶ
-    Camera-->>Runtime: native Blobまたはvideo-frame PNG
-    Runtime->>Worker: native Blobをdecode once
+    Camera-->>Runtime: native Blobまたはtransferable frame
+    Runtime-->>UI: camera sourceを解放可能と通知
+    Runtime->>Worker: native Blobをdecodeまたはframeをrasterize
     Worker-->>Runtime: dimensions + prepared rasters
     Runtime-->>UI: native artifactをhistoryへ追加
     Worker-->>Clipboard: 必要な場合だけPNG representation
@@ -568,9 +576,11 @@ PNGはcapture domainの固定形式ではなくClipboard互換representationと�
 - 一つのdecoded imageから実dimensions、portable PNG用full-size `OffscreenCanvas`、320 px thumbnail用small `OffscreenCanvas`を準備し、直ちに`ImageBitmap.close()`する。
 - Workerの2D contextはopaque camera imageとして`{ alpha: false }`を指定し、`willReadFrequently`は既定で使わない。
 - WorkerまたはOffscreenCanvasが利用不能・失敗した場合は、同じdecode-once contractを持つmain-thread Canvas adapterへ一度fallbackする。
+- native Blobを両adapterで検証・decodeできない場合はtyped capture errorとし、camera source解放後の別時点のvideo frameへ暗黙fallbackしない。`takePhoto()`自体の失敗時だけlive video frameへfallbackする。
 - source dimensionsを検証し、capture artifactには同じdimensionsを使う。thumbnailだけはlong edge 320 pxへ縮小する。
 - front previewのCSS transformをCanvasへ適用しない。
-- video-frame routeは`drawImage(video, 0, 0, width, height)`後に`canvas.toBlob(..., "image/png")`を呼ぶ。
+- video-frame routeはmain threadで`createImageBitmap(video)`を行い、ownershipをpersistent Workerへtransferして2D `OffscreenCanvas.convertToBlob("image/png")`でencodeする。
+- Worker unavailable、初期化失敗、runtime failure、timeout時は`drawImage(video, ...)`とmain-thread `HTMLCanvasElement.toBlob("image/png")`へfallbackする。比較診断用の`?videoFramePipeline=canvas`でも同じbaselineを選択できる。
 - `toBlob`が`null`を返した場合は`pngEncodingFailed`とする。
 - capture artifact完成時はpending thumbnailのままhistoryへ追加し、Clipboard settlement後に320 px square以内のJPEG thumbnailを生成・更新する。thumbnailはUI専用でありClipboardには使わない。
 - full-size canvasはPNG完成後に1×1へ縮小し、Clipboard settlementまで保持するのは320 px raster相当だけにする。
