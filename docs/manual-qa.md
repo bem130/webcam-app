@@ -58,8 +58,12 @@
 ## Camera lifecycle
 
 - [ ] camera開始後、`pointerdown`、`keydown`、`wheel`が10秒未満に発生すればidle timerがresetされる。`pointermove`だけではresetされない。
-- [ ] 10秒間操作しないとcamera indicatorが消え、全trackが終了し、「操作がなかったため、カメラを解放しました。」と表示される。
-- [ ] 「カメラを再開」で直前のcameraを優先して再取得し、request連打で複数streamを作らない。
+- [ ] 10秒間操作しないとcamera indicatorが消え、全trackが終了し、全画面screensaverに「操作がなかったため、カメラを解放しました。」と表示される。
+- [ ] screensaver上で元のshutter位置をtapしても撮影されず、直前のcameraを優先した再取得だけが一度発生する。
+- [ ] screensaverは`pointerdown`、`keydown`、`wheel`で再開し、`pointermove`では再開しない。再開後はkeyboard focusがshutterへ戻る。
+- [ ] 320×568とsafe area付きviewportでscreensaverが全画面を覆い、背後のcontrolが露出または操作されない。
+- [ ] OSのreduced motion設定時もscreensaverにtransition / animationがなく、screen readerが停止状態と再開中statusを読み上げる。
+- [ ] camera permission拒否またはdevice消失で再開に失敗した場合、回復可能なerror UIと「カメラを再開」buttonが表示される。
 - [ ] native still取得中またはvideo-frame PNG生成中に10秒境界へ達してもcameraを途中停止せず、source artifact完成後から新しい10秒を計る。
 - [ ] Clipboard settlementまたはthumbnail生成が継続中でも、camera source完成後のidle timeoutでcameraを停止できる。
 - [ ] documentをbackgroundへ移すと直ちに全trackが終了し、visibleへ戻しただけではcameraを自動再取得しない。

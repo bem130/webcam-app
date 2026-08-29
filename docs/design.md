@@ -2,8 +2,8 @@
 
 | 項目 | 内容 |
 | --- | --- |
-| 文書状態 | V2 Phase 4 idle hard suspensionまでの実装設計 |
-| Version | 0.4.0 |
+| 文書状態 | V2 Phase 5 idle screensaverまでの実装設計 |
+| Version | 0.5.0 |
 | 作成日 | 2026-08-30 |
 | 仮称 | Camera Clipboard |
 | 対象 | mobile / tablet / desktop のmodern browser |
@@ -204,6 +204,14 @@ backgroundではsoft disableに依存せず、applicationがhardware releaseを�
 - native Blob取得後のdecode、Clipboard用PNG変換、Clipboard settlement、thumbnailはcameraを必要としないためidle停止を抑止しない。
 - camera切替中は旧streamを先にstopしてtimerを解除し、新stream接続後に新しいtimerをarmする。撮影中のcamera切替と撮影方式変更は無効化する。
 
+### 4.8 Idle screensaverと復帰
+
+- idle停止時はcamera previewとcontrolを通常documentの全画面screensaverで覆う。background停止は理由を明示したcardとbuttonを維持し、resume triggerを混同しない。
+- screensaver自身が`pointerdown`、`keydown`、`wheel`をconsumeし、最初のinteractionではcamera resumeだけを開始する。`pointermove`はresumeにもstreaming中のidle resetにも使わない。
+- pointerdown後に同じgestureのclickが続いてもlocal guardとcamera request guardで一度しか再開しない。背後のshutter、history、camera selectorへeventを伝播させない。
+- screensaverは表示時にfocusを受け、accessible nameとlive statusを提供する。再開中はapp statusで通知し、成功後はshutterへfocusを戻す。失敗時は既存のtyped camera errorと再試行buttonへ遷移する。
+- screensaverはtransitionとanimationを持たず、320×568を含むviewport全体とsafe areaを覆う。
+
 ## 5. Layout and visual design
 
 ### 5.1 Apple HIGの適用方法
@@ -278,8 +286,10 @@ stateDiagram-v2
     Streaming --> Switching: camera選択
     Switching --> Streaming: 切替または復帰成功
     Switching --> Blocked: 復帰失敗
-    Streaming --> Suspended: idle timeout・document hidden
-    Suspended --> Requesting: 明示的な再開
+    Streaming --> IdleSuspended: idle timeout
+    Streaming --> BackgroundSuspended: document hidden
+    IdleSuspended --> Requesting: 最初の操作をconsumeして再開
+    BackgroundSuspended --> Requesting: 明示buttonで再開
     Blocked --> Requesting: 再試行
 ```
 
@@ -390,7 +400,7 @@ flowchart TD
 上下関係は次の三平面へ分け、通常UIを一つのglobal `z-index` total orderへ混ぜない。
 
 1. camera-local UIは同一stacking context内のDOM/render順で表現する。
-2. status、memory warning、将来のscreensaver等は`AppOverlayPlane`のtyped ordered declarationからDOM順を生成する。
+2. screensaver、status、memory warningは`AppOverlayPlane`のtyped ordered declarationからDOM順を生成する。
 3. historyとconfirm modalは`HTMLDialogElement.showModal()`によるbrowser top layerを使う。
 
 数値の`z-index`を直接記述してはならない。DOM順だけでは表現できないoverlayが将来必要になった場合に限り、意味上のordered declarationから`--z-generated-*`を生成する。style sourceではそのgenerated variableだけを許可し、未登録layerと`z-index: 9999`型の局所修正をarchitecture testで拒否する。`transform`、`opacity`、`filter`、`position: fixed/sticky`等が新しいstacking contextを作り得るため、overlay追加時は親を含むstacking context treeを確認する。
@@ -763,7 +773,7 @@ Clipboard APIはbrowser間でpermission modelとuser activationの扱いが異�
 | NFR-03 | stage durationは`durationMs`、Clipboard representation ready / settledはshutter originの`offsetFromShutterMs`として別型で計測する。browser / OS Clipboard時間は後者二つの順序付き差分だけから導出する。 |
 | NFR-04 | copy処理中のlong taskを50 ms未満へ分割し、UI feedbackを先にpaint可能にする。 |
 | NFR-05 | history gridでoriginal capture artifactをdecodeせずthumbnailを使う。 |
-| NFR-06 | background時にvideo trackをdisableし、不要なcamera使用と電力消費を抑える。 |
+| NFR-06 | idle timeoutとbackground移行時に全camera trackをstopし、applicationからhardware releaseを要求する。 |
 | NFR-07 | layout shiftによりshutter位置を変化させない。 |
 
 Android実測では3000×4000 video-frame PNGが約10秒、2448×3264が約2秒、3000×4000 native still routeが約3秒だった。画素数だけで原因を確定せず、上記duration / milestone timingでnative artifact、Clipboard互換変換、browser / OS Clipboard処理を分離して評価する。Phase 3.5でも最大previewを維持し、解像度ceilingやauto adaptive routeは導入しない。
@@ -812,6 +822,8 @@ Worker経路では`createImageBitmap(video)`のsettlementを`videoFrameAcquire`�
 - cameraを他appが使用中
 - portrait / landscape切替
 - background → foreground復帰
+- idle screensaverがshutter位置のtapをconsumeし、pointer / keyboard / wheelで一度だけ再開する
+- 320×568、focus復元、live status、reduced motionでscreensaver contractを維持する
 - shutter連打時にtransactionが重複しない
 - Notes、chat app、image editor等へPNGを実際にpasteできる
 - reload後にhistoryが空である
