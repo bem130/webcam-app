@@ -6,6 +6,7 @@ declare global {
     __clipboardWriteCount: number;
     __cameraRequestCount: number;
     __photoTakeCount: number;
+    __cameraTrackStopCount: number;
     __objectUrlCreateCount: number;
     __objectUrlRevokeCount: number;
   }
@@ -244,6 +245,83 @@ test("disables the photo option and uses video frame when unsupported", async ({
   await expect(page.getByText("動画フレームPNG encode", { exact: true })).toBeVisible();
 });
 
+test("hard-stops the camera at the idle boundary and resumes only on explicit action", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== "chromium",
+    "The deterministic fake camera is configured for Chromium.",
+  );
+  await page.clock.install();
+  await page.goto("./");
+  await page.getByRole("button", { name: "カメラを開始" }).click();
+  await expect(page.getByRole("button", { name: "撮影してClipboardへコピー" })).toBeVisible({
+    timeout: 10_000,
+  });
+  const now = await page.evaluate(() => Date.now());
+  await page.clock.pauseAt(now);
+  await page.evaluate(() => {
+    document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  });
+
+  await page.clock.runFor(9_999);
+  await expect(page.getByRole("heading", { name: "カメラを停止しました" })).toHaveCount(0);
+  await page.clock.runFor(1);
+  await expect(page.getByRole("heading", { name: "カメラを停止しました" })).toBeVisible();
+  await expect(page.getByText("操作がなかったため、カメラを解放しました。")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__cameraTrackStopCount)).toBe(1);
+  expect(
+    await page.locator("video").evaluate((video) => (video as HTMLVideoElement).srcObject === null),
+  ).toBe(true);
+
+  await page.getByRole("button", { name: "カメラを再開" }).click();
+  await expect(page.getByRole("button", { name: "撮影してClipboardへコピー" })).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect.poll(() => page.evaluate(() => window.__cameraRequestCount)).toBe(2);
+});
+
+test("keeps background suspension distinct and does not auto-resume on visibility", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== "chromium",
+    "The deterministic fake camera is configured for Chromium.",
+  );
+  await page.goto("./");
+  await page.getByRole("button", { name: "カメラを開始" }).click();
+  await expect(page.getByRole("button", { name: "撮影してClipboardへコピー" })).toBeVisible({
+    timeout: 10_000,
+  });
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(page.getByRole("heading", { name: "カメラを停止しました" })).toBeVisible();
+  await expect(
+    page.getByText("アプリがバックグラウンドになったため、カメラを解放しました。"),
+  ).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__cameraTrackStopCount)).toBe(1);
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect(await page.evaluate(() => window.__cameraRequestCount)).toBe(1);
+
+  await page.getByRole("button", { name: "カメラを再開" }).click();
+  await expect.poll(() => page.evaluate(() => window.__cameraRequestCount)).toBe(2);
+});
+
 function rectanglesOverlap(
   left: Readonly<{ x: number; y: number; width: number; height: number }>,
   right: Readonly<{ x: number; y: number; width: number; height: number }>,
@@ -259,6 +337,7 @@ function rectanglesOverlap(
 async function installPlatformSpies(page: Page): Promise<void> {
   await page.addInitScript(() => {
     window.__cameraRequestCount = 0;
+    window.__cameraTrackStopCount = 0;
     window.__objectUrlCreateCount = 0;
     window.__objectUrlRevokeCount = 0;
     const createObjectUrl = URL.createObjectURL.bind(URL);
@@ -272,6 +351,13 @@ async function installPlatformSpies(page: Page): Promise<void> {
       revokeObjectUrl(url);
     };
     const mediaDevices = navigator.mediaDevices;
+    // Preserve the native implementation before installing the counting spy.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const originalStop = MediaStreamTrack.prototype.stop;
+    MediaStreamTrack.prototype.stop = function () {
+      window.__cameraTrackStopCount += 1;
+      return originalStop.call(this);
+    };
     if (mediaDevices?.getUserMedia !== undefined) {
       const original = mediaDevices.getUserMedia.bind(mediaDevices);
       Object.defineProperty(mediaDevices, "getUserMedia", {
