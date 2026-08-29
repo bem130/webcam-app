@@ -21,7 +21,7 @@
 |   3.5 | Capture pipeline measurement and worker optimization            | 完了 (`a163a8d`) |
 |   3.6 | Video-frame measurement and Worker optimization                 | 完了 (`9706e83`) |
 |     4 | Idle timeout core + hard camera suspend                         | 完了 (`b228df4`) |
-|     5 | Screensaver + interaction-based resume                          | 完了 (`316890f`) |
+|     5 | Screensaver + interaction-based resume                          | 完了 (`b801ff5`) |
 |     6 | Preferences (idle timeout + capture mode)                       | 未着手           |
 |     7 | Acceptance automation + high-resolution memory hardening        | 未着手           |
 |     8 | Documentation + release hardening                               | 未着手           |
@@ -585,7 +585,7 @@ b228df4 feat: hard-stop idle and background cameras
 
 ### 完了commit
 
-`316890f feat: complete phase 5 idle screensaver`
+`b801ff5 feat: complete phase 5 idle screensaver`
 
 ## 8. Phase 6: User preferences
 
