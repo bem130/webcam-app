@@ -20,7 +20,7 @@
 |     3 | Native still capture via `ImageCapture` progressive enhancement | 完了 (`8b0a83a`) |
 |   3.5 | Capture pipeline measurement and worker optimization            | 完了 (`a163a8d`) |
 |   3.6 | Video-frame measurement and Worker optimization                 | 完了 (`9706e83`) |
-|     4 | Idle timeout core + hard camera suspend                         | 未着手           |
+|     4 | Idle timeout core + hard camera suspend                         | 完了 (`a50971f`) |
 |     5 | Screensaver + interaction-based resume                          | 未着手           |
 |     6 | Preferences (idle timeout + capture mode)                       | 未着手           |
 |     7 | Acceptance automation + high-resolution memory hardening        | 未着手           |
@@ -73,7 +73,7 @@ preference = videoFrame
   -> PNGへ変換
 ```
 
-`takePhoto()`はoptional progressive enhancementであり、camera開始、camera切替、video-frame captureを阻害してはならない。`photoPreferred`はphoto routeの成功を保証する名前ではなく、失敗時に`videoFrame`へfallbackするpreferenceである。actual routeは各history entryへ保持し、configured preferenceと混同しない。
+`takePhoto()`はoptional progressive enhancementであり、camera開始、camera切替、video-frame captureを阻害してはならない。`photoPreferred`はphoto routeの成功を保証する名前ではなく、capability取得または`takePhoto()`自体の失敗時に`videoFrame`へfallbackするpreferenceである。actual routeは各history entryへ保持し、configured preferenceと混同しない。
 
 capture artifactとClipboard representationも分離する。`takePhoto()`が返したnative encoded Blobはhistoryでは再encodeせず保持する。一方、Clipboard APIでportableな画像writeとして保証される形式は`image/png`であり、`takePhoto()`の返却MIMEは非同期に初めて確定するため、Phase 3の互換経路は最初の`await`より前に`image/png`のPromiseを入れた`ClipboardItem`を書込み始める。native MIMEを直接Clipboardへ書く最適化は、shutter時点でMIMEを安全に確定でき、`ClipboardItem.supports(mimeType)`と実writeの両方を満たせる実装に限る。標準APIだけで事前確定できない環境では推測したMIME keyを使わない。
 
@@ -248,8 +248,9 @@ type CaptureRoute = "photo" | "videoFrame";
 - `getPhotoCapabilities()`の`imageWidth.max` / `imageHeight.max`をstill captureの最大要求dimensionsとして保持する。
 - shutterでは`takePhoto({ imageWidth, imageHeight })`を最高品質routeとして使う。
 - `takePhoto()`が返すencoded BlobはMIMEを検証し、実dimensionsを取得したうえで再encodeせず`CapturedImage`としてhistoryへ渡す。capture domainでPNGを前提にしない。
-- `ImageCapture`非対応、photo capability取得失敗、`takePhoto()`失敗、返却BlobのMIME / decode検証失敗時は、trackがliveならPhase 2のvideo-frame captureへ一度fallbackする。
-- fallbackも失敗した場合だけtyped capture errorを表示する。fallbackした事実は画像内容を含めずstatusとして通知してよい。
+- `ImageCapture`非対応、photo capability取得失敗、`takePhoto()`失敗時は、trackがliveならPhase 2のvideo-frame captureへ一度fallbackする。
+- native Blob取得後のWorker処理失敗は同じBlobをmain-thread Canvas adapterで一度fallbackする。両adapterでMIME / decode検証が失敗した場合はtyped capture errorを返し、camera source解放後の別時点のvideo frameを暗黙に撮影しない。
+- video-frame fallbackも失敗した場合だけtyped capture errorを表示する。fallbackした事実は画像内容を含めずstatusとして通知してよい。
 - photo capabilityがvideo settingsと異なる場合、camera viewまたはdetailsに「プレビュー」と「撮影 最大」を分けて表示する。
 - thumbnailはnative Blobから非同期生成し、temporary `ImageBitmap`をcloseする。native stillをhistoryへ追加するためのfull-size canvas / PNG encodeは作らない。
 - Clipboard adapterはcapture形式とClipboard representationを分離する。portable fallbackは同期的に開始した`image/png` Promiseへnative Blobを必要時だけ変換し、native MIME direct writeは事前にMIMEを確定できる場合だけopt-inする。
@@ -554,9 +555,13 @@ streaming -- timeout --> idleSuspended -- explicit resume --> requesting --> str
 - capture開始直後にtimeoutへ到達してもstopせず、operation完了後にtimerを再armする。
 - idle停止とbackground suspendが互いのresumeを誤って実行しない。
 
-### Commit
+### 完了commits
 
-`feat: complete phase 4 idle camera suspension`
+```text
+e019cf3 feat: add typed idle timer controller
+a0f8081 refactor: expose camera-source capture lifetime
+a50971f feat: hard-stop idle and background cameras
+```
 
 ## 7. Phase 5: Screensaver + interaction-based resume
 

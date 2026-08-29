@@ -43,6 +43,7 @@
 - [ ] Worker経路とCanvas baselineで、Clipboard完了までの時間を同じcamera、同じ3000×4000、近い被写体条件で各3回以上測定する。固定ms thresholdではなく中央値とstage構成を比較する。
 - [ ] 3000×4000 native still routeの約3秒という変更前baselineと同じcamera・解像度で比較し、Worker route / fallback routeと各stageを記録する。
 - [ ] copy の成功・失敗が text と screen reader live region で判別できる。
+- [ ] copy成功通知が390×844でshutterやcamera selectorへ重ならず左下に表示され、約3秒で消える。error / warningは手動で閉じるまで確認できる。
 - [ ] Clipboard permission を拒否しても画像が履歴へ残り、「再コピー」が動作する。
 - [ ] camera が一台のとき quick swap が表示されない。
 - [ ] camera が二台・三台以上のとき quick swap と一覧選択が動作する。
@@ -53,6 +54,16 @@
 ### Phase 3.6 Android実測記録
 
 2026-08-29、Chrome 150 / Android 10 / 3000×4000で通常URLのWorker 2Dを2回測定した。Clipboard完了は3093 msと2620 ms、Worker PNG encodeは1580 msと1682 msで、main-thread baselineの10862 ms / 9774 msから大幅に短縮した。履歴のactual processing routeはいずれも`Worker OffscreenCanvas (2D)`であり、fallbackは発生していない。追加の端末・被写体条件では上記checklistに従い3回以上の中央値を継続記録する。
+
+## Camera lifecycle
+
+- [ ] camera開始後、`pointerdown`、`keydown`、`wheel`が10秒未満に発生すればidle timerがresetされる。`pointermove`だけではresetされない。
+- [ ] 10秒間操作しないとcamera indicatorが消え、全trackが終了し、「操作がなかったため、カメラを解放しました。」と表示される。
+- [ ] 「カメラを再開」で直前のcameraを優先して再取得し、request連打で複数streamを作らない。
+- [ ] native still取得中またはvideo-frame PNG生成中に10秒境界へ達してもcameraを途中停止せず、source artifact完成後から新しい10秒を計る。
+- [ ] Clipboard settlementまたはthumbnail生成が継続中でも、camera source完成後のidle timeoutでcameraを停止できる。
+- [ ] documentをbackgroundへ移すと直ちに全trackが終了し、visibleへ戻しただけではcameraを自動再取得しない。
+- [ ] background停止後は「アプリがバックグラウンドになったため、カメラを解放しました。」と表示され、明示的な再開が動作する。
 
 ## 履歴と privacy
 
