@@ -20,7 +20,7 @@
 |     3 | Native still capture via `ImageCapture` progressive enhancement | 完了 (`8b0a83a`) |
 |   3.5 | Capture pipeline measurement and worker optimization            | 完了 (`a163a8d`) |
 |   3.6 | Video-frame measurement and Worker optimization                 | 完了 (`9706e83`) |
-|     4 | Idle timeout core + hard camera suspend                         | 完了 (`a50971f`) |
+|     4 | Idle timeout core + hard camera suspend                         | 完了 (`b228df4`) |
 |     5 | Screensaver + interaction-based resume                          | 未着手           |
 |     6 | Preferences (idle timeout + capture mode)                       | 未着手           |
 |     7 | Acceptance automation + high-resolution memory hardening        | 未着手           |
@@ -558,9 +558,9 @@ streaming -- timeout --> idleSuspended -- explicit resume --> requesting --> str
 ### 完了commits
 
 ```text
-e019cf3 feat: add typed idle timer controller
-a0f8081 refactor: expose camera-source capture lifetime
-a50971f feat: hard-stop idle and background cameras
+55db3bd feat: add typed idle timer controller
+8c7250b refactor: expose camera-source capture lifetime
+b228df4 feat: hard-stop idle and background cameras
 ```
 
 ## 7. Phase 5: Screensaver + interaction-based resume
