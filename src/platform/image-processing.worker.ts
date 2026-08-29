@@ -1,5 +1,6 @@
 import type { CaptureError } from "../core/errors";
 import type { ImageProcessingRequest, ImageProcessingResponse } from "./image-processing-protocol";
+import { encodeWorkerVideoFrame, VideoFrameWorkerFailure } from "./video-frame-worker";
 
 type WorkerScope = Readonly<{
   postMessage: (message: ImageProcessingResponse) => void;
@@ -20,6 +21,10 @@ workerScope.onmessage = (event) => {
     case "prepare":
       enqueue(() => prepare(request));
       break;
+    case "prepareVideoFrame":
+      post({ type: "videoFrameAccepted", jobId: request.jobId });
+      enqueue(() => prepareVideoFrame(request));
+      break;
     case "encodeThumbnail":
       enqueue(() => encodeThumbnail(request.jobId));
       break;
@@ -28,6 +33,21 @@ workerScope.onmessage = (event) => {
       break;
   }
 };
+
+async function prepareVideoFrame(
+  request: Extract<ImageProcessingRequest, { type: "prepareVideoFrame" }>,
+): Promise<void> {
+  try {
+    const encoded = await encodeWorkerVideoFrame(request.bitmap);
+    post({ type: "videoFrameReady", jobId: request.jobId, ...encoded });
+  } catch (cause) {
+    post({
+      type: "videoFrameFailed",
+      jobId: request.jobId,
+      error: cause instanceof VideoFrameWorkerFailure ? cause.error : { tag: "pngEncodingFailed" },
+    });
+  }
+}
 
 function enqueue(task: () => Promise<void>): void {
   processingQueue = processingQueue.then(task, task);

@@ -178,6 +178,12 @@ function CaptureDetail({
           <dt>実際の撮影経路</dt>
           <dd>{captureRouteLabel(entry.route)}</dd>
         </div>
+        {entry.route === "videoFrame" && (
+          <div>
+            <dt>動画処理経路</dt>
+            <dd>{videoFramePipelineLabel(diagnostics)}</dd>
+          </div>
+        )}
         <div>
           <dt>画像形式</dt>
           <dd>{entry.mimeType}</dd>
@@ -263,4 +269,10 @@ function capturePreferenceLabel(preference: CaptureEntry["preference"]): string 
 
 function captureRouteLabel(route: CaptureEntry["route"]): string {
   return route === "photo" ? "写真API" : "動画フレーム";
+}
+
+function videoFramePipelineLabel(diagnostics: CaptureDiagnostics): string {
+  const transfer = diagnostics.durations.videoFrameTransfer;
+  if (transfer === undefined) return "計測待ち";
+  return transfer.tag === "some" ? "Worker OffscreenCanvas (2D)" : "main-thread Canvas";
 }

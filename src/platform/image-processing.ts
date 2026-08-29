@@ -1,6 +1,7 @@
 import type { CaptureError } from "../core/errors";
 import { causeName } from "../core/errors";
-import type { Dimensions } from "./capture";
+import { some } from "../core/result";
+import type { Dimensions, EncodedVideoFrame } from "./capture";
 import type { ImageProcessingRequest, ImageProcessingResponse } from "./image-processing-protocol";
 
 export type PreparedImage = Readonly<{
@@ -14,11 +15,18 @@ export type EncodedClipboardPng = Readonly<{ blob: Blob; durationMs: number }>;
 
 export type ImageProcessingPort = Readonly<{
   prepare: (image: Blob, needsClipboardPng: boolean) => Promise<PreparedImage>;
+  processVideoFrame: (
+    video: HTMLVideoElement,
+    fallback: () => Promise<EncodedVideoFrame>,
+    clock: () => number,
+  ) => Promise<EncodedVideoFrame>;
   dispose: () => void;
 }>;
 
+export type VideoFramePipeline = "workerOffscreen2d" | "mainThreadCanvas";
+
 export type ImageProcessingWorker = Readonly<{
-  postMessage: (message: ImageProcessingRequest) => void;
+  postMessage: (message: ImageProcessingRequest, transfer?: Transferable[]) => void;
   terminate: () => void;
   setMessageHandler: (handler: (message: ImageProcessingResponse) => void) => void;
   setErrorHandler: (handler: () => void) => void;
@@ -39,6 +47,17 @@ type WorkerJob = Readonly<{
   clipboardPng: Deferred<EncodedClipboardPng>;
   thumbnail: Deferred<Blob>;
 }> & {
+  cleanupTimer: ReturnType<typeof setTimeout>;
+};
+
+type VideoFrameWorkerJob = Readonly<{
+  jobId: number;
+  acquiredDurationMs: number;
+  transferStartedAt: number;
+  clock: () => number;
+  result: Deferred<EncodedVideoFrame>;
+}> & {
+  transferDurationMs: number | undefined;
   cleanupTimer: ReturnType<typeof setTimeout>;
 };
 
@@ -138,6 +157,15 @@ export class CanvasImageProcessingPort implements ImageProcessingPort {
     }
   }
 
+  processVideoFrame(
+    _video: HTMLVideoElement,
+    fallback: () => Promise<EncodedVideoFrame>,
+    clock: () => number,
+  ): Promise<EncodedVideoFrame> {
+    void clock;
+    return fallback();
+  }
+
   dispose(): void {}
 }
 
@@ -145,13 +173,20 @@ export class WorkerImageProcessingPort implements ImageProcessingPort {
   readonly #worker: ImageProcessingWorker;
   readonly #fallback: ImageProcessingPort;
   readonly #jobs = new Map<number, WorkerJob>();
+  readonly #videoFrameJobs = new Map<number, VideoFrameWorkerJob>();
   #nextJobId = 1;
   #workerFailed = false;
   #disposed = false;
+  readonly #videoFramePipeline: VideoFramePipeline;
 
-  constructor(worker: ImageProcessingWorker, fallback: ImageProcessingPort) {
+  constructor(
+    worker: ImageProcessingWorker,
+    fallback: ImageProcessingPort,
+    videoFramePipeline: VideoFramePipeline = "workerOffscreen2d",
+  ) {
     this.#worker = worker;
     this.#fallback = fallback;
+    this.#videoFramePipeline = videoFramePipeline;
     worker.setMessageHandler((message) => this.#handleMessage(message));
     worker.setErrorHandler(() => this.#handleWorkerFailure());
   }
@@ -166,6 +201,30 @@ export class WorkerImageProcessingPort implements ImageProcessingPort {
     }
   }
 
+  async processVideoFrame(
+    video: HTMLVideoElement,
+    fallback: () => Promise<EncodedVideoFrame>,
+    clock: () => number,
+  ): Promise<EncodedVideoFrame> {
+    if (this.#workerFailed || this.#videoFramePipeline === "mainThreadCanvas") return fallback();
+    let bitmap: ImageBitmap | undefined;
+    try {
+      const acquiredStartedAt = clock();
+      bitmap = await createImageBitmap(video);
+      const acquiredDurationMs = elapsed(clock, acquiredStartedAt);
+      if (bitmap.width <= 0 || bitmap.height <= 0) {
+        throw failure({ tag: "frameNotReady" });
+      }
+      const result = this.#processVideoFrameWithWorker(bitmap, acquiredDurationMs, clock);
+      bitmap = undefined;
+      return await result;
+    } catch (cause) {
+      bitmap?.close();
+      if (this.#disposed) throw cause;
+      return fallback();
+    }
+  }
+
   dispose(): void {
     this.#disposed = true;
     this.#workerFailed = true;
@@ -173,6 +232,10 @@ export class WorkerImageProcessingPort implements ImageProcessingPort {
     for (const job of [...this.#jobs.values()]) {
       this.#rejectJob(job, failure({ tag: "imageDecodeFailed" }));
       this.#deleteJob(job);
+    }
+    for (const job of [...this.#videoFrameJobs.values()]) {
+      job.result.reject(failure({ tag: "pngEncodingFailed" }));
+      this.#deleteVideoFrameJob(job);
     }
     this.#fallback.dispose();
   }
@@ -197,7 +260,41 @@ export class WorkerImageProcessingPort implements ImageProcessingPort {
     return job.prepared.promise;
   }
 
+  #processVideoFrameWithWorker(
+    bitmap: ImageBitmap,
+    acquiredDurationMs: number,
+    clock: () => number,
+  ): Promise<EncodedVideoFrame> {
+    const jobId = this.#nextJobId++;
+    const job: VideoFrameWorkerJob = {
+      jobId,
+      acquiredDurationMs,
+      transferStartedAt: clock(),
+      transferDurationMs: undefined,
+      clock,
+      result: deferred<EncodedVideoFrame>(),
+      cleanupTimer: setTimeout(() => this.#timeoutVideoFrameJob(jobId), WORKER_JOB_TIMEOUT_MS),
+    };
+    this.#videoFrameJobs.set(jobId, job);
+    try {
+      this.#worker.postMessage({ type: "prepareVideoFrame", jobId, bitmap }, [bitmap]);
+    } catch (cause) {
+      bitmap.close();
+      job.result.reject(cause);
+      this.#deleteVideoFrameJob(job);
+    }
+    return job.result.promise;
+  }
+
   #handleMessage(message: ImageProcessingResponse): void {
+    if (
+      message.type === "videoFrameAccepted" ||
+      message.type === "videoFrameReady" ||
+      message.type === "videoFrameFailed"
+    ) {
+      this.#handleVideoFrameMessage(message);
+      return;
+    }
     const job = this.#jobs.get(message.jobId);
     if (job === undefined) return;
     switch (message.type) {
@@ -275,11 +372,58 @@ export class WorkerImageProcessingPort implements ImageProcessingPort {
     }
   }
 
+  #handleVideoFrameMessage(
+    message: Extract<
+      ImageProcessingResponse,
+      { type: "videoFrameAccepted" | "videoFrameReady" | "videoFrameFailed" }
+    >,
+  ): void {
+    const job = this.#videoFrameJobs.get(message.jobId);
+    if (job === undefined) return;
+    switch (message.type) {
+      case "videoFrameAccepted":
+        job.transferDurationMs = elapsed(job.clock, job.transferStartedAt);
+        break;
+      case "videoFrameReady": {
+        const transferDurationMs = job.transferDurationMs;
+        if (transferDurationMs === undefined) {
+          job.result.reject(failure({ tag: "pngEncodingFailed" }));
+        } else {
+          try {
+            const dimensions = checkedDimensions(message.width, message.height);
+            job.result.resolve({
+              blob: message.blob,
+              ...dimensions,
+              durations: {
+                videoFrameAcquire: checkedDuration(job.acquiredDurationMs),
+                videoFrameTransfer: some(checkedDuration(transferDurationMs)),
+                videoFrameRaster: checkedDuration(message.rasterDurationMs),
+                videoFramePngEncode: checkedDuration(message.pngEncodeDurationMs),
+              },
+            });
+          } catch (cause) {
+            job.result.reject(cause);
+          }
+        }
+        this.#deleteVideoFrameJob(job);
+        break;
+      }
+      case "videoFrameFailed":
+        job.result.reject(failure(message.error));
+        this.#deleteVideoFrameJob(job);
+        break;
+    }
+  }
+
   #handleWorkerFailure(): void {
     this.#workerFailed = true;
     for (const job of [...this.#jobs.values()]) {
       this.#rejectJob(job, failure({ tag: "imageDecodeFailed" }));
       this.#deleteJob(job);
+    }
+    for (const job of [...this.#videoFrameJobs.values()]) {
+      job.result.reject(failure({ tag: "pngEncodingFailed" }));
+      this.#deleteVideoFrameJob(job);
     }
   }
 
@@ -292,6 +436,13 @@ export class WorkerImageProcessingPort implements ImageProcessingPort {
       // Timeout cleanup must not depend on a responsive worker.
     }
     this.#rejectAndDelete(job, failure({ tag: "thumbnailEncodingFailed" }));
+  }
+
+  #timeoutVideoFrameJob(jobId: number): void {
+    const job = this.#videoFrameJobs.get(jobId);
+    if (job === undefined) return;
+    job.result.reject(failure({ tag: "pngEncodingFailed" }));
+    this.#deleteVideoFrameJob(job);
   }
 
   #rejectAndDelete(job: WorkerJob, cause: unknown): void {
@@ -309,9 +460,16 @@ export class WorkerImageProcessingPort implements ImageProcessingPort {
     clearTimeout(job.cleanupTimer);
     this.#jobs.delete(job.jobId);
   }
+
+  #deleteVideoFrameJob(job: VideoFrameWorkerJob): void {
+    clearTimeout(job.cleanupTimer);
+    this.#videoFrameJobs.delete(job.jobId);
+  }
 }
 
-export function browserImageProcessingPort(): ImageProcessingPort {
+export function browserImageProcessingPort(
+  videoFramePipeline: VideoFramePipeline = "workerOffscreen2d",
+): ImageProcessingPort {
   const fallback = new CanvasImageProcessingPort();
   if (
     typeof Worker === "undefined" ||
@@ -325,7 +483,7 @@ export function browserImageProcessingPort(): ImageProcessingPort {
       type: "module",
     });
     const adapter: ImageProcessingWorker = {
-      postMessage: (message) => worker.postMessage(message),
+      postMessage: (message, transfer = []) => worker.postMessage(message, transfer),
       terminate: () => worker.terminate(),
       setMessageHandler: (handler) => {
         worker.onmessage = (event: MessageEvent<ImageProcessingResponse>) => handler(event.data);
@@ -334,7 +492,7 @@ export function browserImageProcessingPort(): ImageProcessingPort {
         worker.onerror = () => handler();
       },
     };
-    return new WorkerImageProcessingPort(adapter, fallback);
+    return new WorkerImageProcessingPort(adapter, fallback, videoFramePipeline);
   } catch {
     return fallback;
   }
@@ -347,6 +505,11 @@ export function isImageProcessingFailure(cause: unknown): cause is ImageProcessi
 function checkedDimensions(width: number, height: number): Dimensions {
   if (width <= 0 || height <= 0) throw failure({ tag: "invalidImage" });
   return { width, height };
+}
+
+function checkedDuration(value: number): number {
+  if (!Number.isFinite(value) || value < 0) throw failure({ tag: "pngEncodingFailed" });
+  return value;
 }
 
 function containedDimensions(width: number, height: number, maxLongEdge: number): Dimensions {
@@ -405,6 +568,10 @@ function deferred<T>(): Deferred<T> {
   });
   void promise.catch(() => undefined);
   return { promise, resolve, reject };
+}
+
+function elapsed(clock: () => number, startedAt: number): number {
+  return Math.max(0, clock() - startedAt);
 }
 
 function lazy(factory: () => Promise<PreparedImage>): Readonly<{

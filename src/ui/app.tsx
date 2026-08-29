@@ -68,7 +68,10 @@ export function App() {
   const switchTransactionRef = useRef(0);
   const thumbnailUrls = useMemo(() => new ObjectUrlRegistry(), []);
   const detailUrls = useMemo(() => new ObjectUrlRegistry(), []);
-  const imageProcessing = useMemo(() => browserImageProcessingPort(), []);
+  const imageProcessing = useMemo(
+    () => browserImageProcessingPort(diagnosticVideoFramePipeline(window.location.search)),
+    [],
+  );
   const capabilityMessage = preflightMessage();
 
   const discoverPhotoCapabilities = useCallback((stream: MediaStream) => {
@@ -608,4 +611,10 @@ function withoutMapKey<K, V>(source: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, 
   const next = new Map(source);
   next.delete(key);
   return next;
+}
+
+function diagnosticVideoFramePipeline(search: string): "workerOffscreen2d" | "mainThreadCanvas" {
+  return new URLSearchParams(search).get("videoFramePipeline") === "canvas"
+    ? "mainThreadCanvas"
+    : "workerOffscreen2d";
 }
