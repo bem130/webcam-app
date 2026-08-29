@@ -321,6 +321,41 @@
 .suspended-card {
   position: relative;
 }
+.screensaver {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  width: 100%;
+  height: 100dvh;
+  padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
+    max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  place-content: center;
+  gap: 14px;
+  border: 0;
+  border-radius: 0;
+  color: #fff;
+  text-align: center;
+  background: radial-gradient(circle at 50% 42%, rgb(40 52 70 / 68%), transparent 38%), #050608;
+  transition: none;
+  animation: none;
+}
+.screensaver:focus-visible {
+  outline: 3px solid #64d2ff;
+  outline-offset: -7px;
+}
+.screensaver-title {
+  display: block;
+  font-size: clamp(2rem, 9vw, 4rem);
+  font-weight: 750;
+  letter-spacing: -0.045em;
+}
+.screensaver-copy {
+  display: block;
+  max-width: 34rem;
+  color: var(--muted);
+  font-size: clamp(0.92rem, 3.6vw, 1.1rem);
+  line-height: 1.6;
+}
 .welcome h1,
 .error-card h1,
 .suspended-card h1 {

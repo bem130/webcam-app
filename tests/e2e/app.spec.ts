@@ -245,20 +245,22 @@ test("disables the photo option and uses video frame when unsupported", async ({
   await expect(page.getByText("動画フレームPNG encode", { exact: true })).toBeVisible();
 });
 
-test("hard-stops the camera at the idle boundary and resumes only on explicit action", async ({
-  page,
-  browserName,
-}) => {
+test("covers the idle camera with a resume-only screensaver", async ({ page, browserName }) => {
   test.skip(
     browserName !== "chromium",
     "The deterministic fake camera is configured for Chromium.",
   );
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.clock.install();
+  await installClipboardMock(page);
+  await installImageCaptureMock(page);
   await page.goto("./");
   await page.getByRole("button", { name: "カメラを開始" }).click();
-  await expect(page.getByRole("button", { name: "撮影してClipboardへコピー" })).toBeVisible({
-    timeout: 10_000,
-  });
+  const shutter = page.getByRole("button", { name: "撮影してClipboardへコピー" });
+  await expect(shutter).toBeVisible({ timeout: 10_000 });
+  const shutterBox = await shutter.boundingBox();
+  if (shutterBox === null) throw new Error("expected a visible shutter");
   const now = await page.evaluate(() => Date.now());
   await page.clock.pauseAt(now);
   await page.evaluate(() => {
@@ -269,16 +271,70 @@ test("hard-stops the camera at the idle boundary and resumes only on explicit ac
   await expect(page.getByRole("heading", { name: "カメラを停止しました" })).toHaveCount(0);
   await page.clock.runFor(1);
   await expect(page.getByRole("heading", { name: "カメラを停止しました" })).toBeVisible();
-  await expect(page.getByText("操作がなかったため、カメラを解放しました。")).toBeVisible();
+  const screensaver = page.getByRole("button", { name: "カメラを再開" });
+  await expect(screensaver).toBeFocused();
+  const screensaverBox = await screensaver.boundingBox();
+  expect(screensaverBox).toEqual({ x: 0, y: 0, width: 320, height: 568 });
+  expect(
+    await screensaver.evaluate((element) => ({
+      animationName: getComputedStyle(element).animationName,
+      transitionProperty: getComputedStyle(element).transitionProperty,
+    })),
+  ).toEqual({ animationName: "none", transitionProperty: "none" });
   await expect.poll(() => page.evaluate(() => window.__cameraTrackStopCount)).toBe(1);
   expect(
     await page.locator("video").evaluate((video) => (video as HTMLVideoElement).srcObject === null),
   ).toBe(true);
 
-  await page.getByRole("button", { name: "カメラを再開" }).click();
+  await page.mouse.move(1, 1);
+  await expect(screensaver).toBeVisible();
+  expect(await page.evaluate(() => window.__cameraRequestCount)).toBe(1);
+
+  await page.mouse.click(shutterBox.x + shutterBox.width / 2, shutterBox.y + shutterBox.height / 2);
+  await expect(shutter).toBeVisible({ timeout: 10_000 });
+  await expect.poll(() => page.evaluate(() => window.__cameraRequestCount)).toBe(2);
+  await expect(shutter).toBeFocused();
+  expect(await page.evaluate(() => window.__clipboardWriteCount)).toBe(0);
+  expect(await page.evaluate(() => window.__photoTakeCount)).toBe(0);
+
+  await page.clock.runFor(10_000);
+  await expect(screensaver).toBeVisible();
+  await screensaver.dispatchEvent("keydown", { key: "Enter", code: "Enter", bubbles: true });
+  await expect.poll(() => page.evaluate(() => window.__cameraRequestCount)).toBe(3);
+  await expect(shutter).toBeFocused();
+
+  await page.clock.runFor(10_000);
+  await expect(screensaver).toBeVisible();
+  await screensaver.dispatchEvent("wheel", { deltaY: 1, bubbles: true });
+  await expect.poll(() => page.evaluate(() => window.__cameraRequestCount)).toBe(4);
+  await expect(shutter).toBeFocused();
+});
+
+test("shows a recoverable error when screensaver resume fails", async ({ page, browserName }) => {
+  test.skip(
+    browserName !== "chromium",
+    "The deterministic fake camera is configured for Chromium.",
+  );
+  await page.clock.install();
+  await page.goto("./");
+  await page.getByRole("button", { name: "カメラを開始" }).click();
   await expect(page.getByRole("button", { name: "撮影してClipboardへコピー" })).toBeVisible({
     timeout: 10_000,
   });
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+      configurable: true,
+      value: () => {
+        window.__cameraRequestCount += 1;
+        return Promise.reject(new DOMException("Denied", "NotAllowedError"));
+      },
+    });
+  });
+
+  await page.clock.runFor(10_000);
+  await page.getByRole("button", { name: "カメラを再開" }).click();
+  await expect(page.getByRole("heading", { name: "カメラを利用できません" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "カメラを再開" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__cameraRequestCount)).toBe(2);
 });
 

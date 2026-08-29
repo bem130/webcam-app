@@ -47,6 +47,7 @@ import { ErrorView } from "./error-view";
 import { HistoryPanel } from "./history-panel";
 import { cameraErrorMessage, captureErrorMessage, clipboardErrorMessage } from "./messages.ja";
 import { PermissionView } from "./permission-view";
+import { Screensaver } from "./screensaver";
 import { SuspendedView } from "./suspended-view";
 
 type Feedback = Readonly<{ tone: "neutral" | "success" | "error" | "warning"; text: string }>;
@@ -67,12 +68,14 @@ export function App() {
   >(new Map());
   const videoRef = useRef<HTMLVideoElement>(null);
   const placeholderRef = useRef<HTMLCanvasElement>(null);
+  const shutterRef = useRef<HTMLButtonElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const nativePhotoRef = useRef<Option<NativePhotoCapture>>(none);
   const ignoredDiagnosticsRef = useRef(new Set<CaptureId>());
   const switchTransactionRef = useRef(0);
   const cameraRequestInFlightRef = useRef(false);
   const cameraRequestTargetRef = useRef<Option<CameraId>>(none);
+  const restoreShutterFocusRef = useRef(false);
   const modelRef = useRef(model);
   modelRef.current = model;
   const thumbnailUrls = useMemo(() => new ObjectUrlRegistry(), []);
@@ -93,6 +96,18 @@ export function App() {
     }, TRANSIENT_FEEDBACK_DURATION_MS);
     return () => window.clearTimeout(handle);
   }, [feedback]);
+
+  useEffect(() => {
+    if (!restoreShutterFocusRef.current) return;
+    if (model.camera.tag === "streaming") {
+      restoreShutterFocusRef.current = false;
+      shutterRef.current?.focus();
+      return;
+    }
+    if (model.camera.tag === "blocked" || model.camera.tag === "awaitingStart") {
+      restoreShutterFocusRef.current = false;
+    }
+  }, [model.camera]);
 
   const hardSuspendCamera = useCallback((reason: SuspensionReason) => {
     const camera = modelRef.current.camera;
@@ -220,50 +235,59 @@ export function App() {
     }
   }, [attachStream, capabilityMessage, discoverPhotoCapabilities, idleController]);
 
-  const resumeCamera = useCallback(async () => {
-    if (model.camera.tag !== "suspended" || cameraRequestInFlightRef.current) return;
-    cameraRequestInFlightRef.current = true;
-    const retainedCamera = model.camera.current;
-    cameraRequestTargetRef.current = retainedCamera;
-    try {
-      switchTransactionRef.current += 1;
-      const transaction = switchTransactionRef.current;
-      dispatch({ type: "cameraRequestStarted" });
-      setFeedback(null);
-      const result =
-        retainedCamera.tag === "some"
-          ? await requestSpecificCamera(retainedCamera.value)
-          : await requestInitialCamera();
-      if (transaction !== switchTransactionRef.current) {
-        if (result.tag === "ok") stopStream(result.value);
-        return;
-      }
-      if (result.tag === "err") {
-        dispatch({ type: "cameraFailed", error: result.error });
-        return;
-      }
+  const resumeCamera = useCallback(
+    async (restoreShutterFocus: boolean) => {
+      if (model.camera.tag !== "suspended" || cameraRequestInFlightRef.current) return;
+      cameraRequestInFlightRef.current = true;
+      restoreShutterFocusRef.current = restoreShutterFocus;
+      const retainedCamera = model.camera.current;
+      cameraRequestTargetRef.current = retainedCamera;
       try {
-        const videoSettings = await attachStream(result.value);
-        const cameras = await enumerateCameras();
-        dispatch({
-          type: "cameraStarted",
-          current: currentCameraId(result.value),
-          cameras,
-          videoSettings,
-        });
-        discoverPhotoCapabilities(result.value);
-        idleController.cameraStreaming();
-      } catch (cause) {
-        stopStream(result.value);
-        streamRef.current = null;
-        nativePhotoRef.current = none;
-        dispatch({ type: "cameraFailed", error: mapCameraError(cause) });
+        switchTransactionRef.current += 1;
+        const transaction = switchTransactionRef.current;
+        dispatch({ type: "cameraRequestStarted" });
+        setFeedback({ tone: "neutral", text: "カメラを再開しています…" });
+        const result =
+          retainedCamera.tag === "some"
+            ? await requestSpecificCamera(retainedCamera.value)
+            : await requestInitialCamera();
+        if (transaction !== switchTransactionRef.current) {
+          if (result.tag === "ok") stopStream(result.value);
+          restoreShutterFocusRef.current = false;
+          setFeedback(null);
+          return;
+        }
+        if (result.tag === "err") {
+          setFeedback(null);
+          dispatch({ type: "cameraFailed", error: result.error });
+          return;
+        }
+        try {
+          const videoSettings = await attachStream(result.value);
+          const cameras = await enumerateCameras();
+          dispatch({
+            type: "cameraStarted",
+            current: currentCameraId(result.value),
+            cameras,
+            videoSettings,
+          });
+          discoverPhotoCapabilities(result.value);
+          idleController.cameraStreaming();
+          setFeedback(null);
+        } catch (cause) {
+          stopStream(result.value);
+          streamRef.current = null;
+          nativePhotoRef.current = none;
+          setFeedback(null);
+          dispatch({ type: "cameraFailed", error: mapCameraError(cause) });
+        }
+      } finally {
+        cameraRequestInFlightRef.current = false;
+        cameraRequestTargetRef.current = none;
       }
-    } finally {
-      cameraRequestInFlightRef.current = false;
-      cameraRequestTargetRef.current = none;
-    }
-  }, [attachStream, discoverPhotoCapabilities, idleController, model.camera]);
+    },
+    [attachStream, discoverPhotoCapabilities, idleController, model.camera],
+  );
 
   const switchCamera = useCallback(
     async (target: CameraId) => {
@@ -584,6 +608,7 @@ export function App() {
         <CameraView
           videoRef={videoRef}
           placeholderRef={placeholderRef}
+          shutterRef={shutterRef}
           cameraState={model.camera}
           cameras={model.cameras}
           currentCamera={currentCamera}
@@ -634,11 +659,16 @@ export function App() {
           onRetry={() => void startCamera()}
         />
       )}
-      {model.camera.tag === "suspended" && (
-        <SuspendedView reason={model.camera.reason} onResume={() => void resumeCamera()} />
+      {model.camera.tag === "suspended" && model.camera.reason === "background" && (
+        <SuspendedView reason={model.camera.reason} onResume={() => void resumeCamera(false)} />
       )}
 
       <AppOverlayPlane
+        screensaver={
+          model.camera.tag === "suspended" && model.camera.reason === "idle" ? (
+            <Screensaver onResume={() => void resumeCamera(true)} />
+          ) : null
+        }
         feedback={
           feedback === null ? null : (
             <div
