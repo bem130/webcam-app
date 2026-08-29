@@ -46,6 +46,7 @@ import { cameraErrorMessage, captureErrorMessage, clipboardErrorMessage } from "
 import { PermissionView } from "./permission-view";
 
 type Feedback = Readonly<{ tone: "neutral" | "success" | "error" | "warning"; text: string }>;
+const TRANSIENT_FEEDBACK_DURATION_MS = 3_000;
 
 export function App() {
   const [model, dispatch] = useReducer(update, initialModel);
@@ -73,6 +74,17 @@ export function App() {
     [],
   );
   const capabilityMessage = preflightMessage();
+
+  useEffect(() => {
+    if (feedback === null || (feedback.tone !== "success" && feedback.tone !== "neutral")) {
+      return;
+    }
+    const visibleFeedback = feedback;
+    const handle = window.setTimeout(() => {
+      setFeedback((current) => (current === visibleFeedback ? null : current));
+    }, TRANSIENT_FEEDBACK_DURATION_MS);
+    return () => window.clearTimeout(handle);
+  }, [feedback]);
 
   const discoverPhotoCapabilities = useCallback((stream: MediaStream) => {
     nativePhotoRef.current = none;
