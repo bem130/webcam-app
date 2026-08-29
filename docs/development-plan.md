@@ -19,7 +19,7 @@
 |   2.5 | Architecture and repository verification gates                  | 完了 (`ac16b78`) |
 |     3 | Native still capture via `ImageCapture` progressive enhancement | 完了 (`8b0a83a`) |
 |   3.5 | Capture pipeline measurement and worker optimization            | 完了 (`a163a8d`) |
-|   3.6 | Video-frame measurement and Worker optimization                 | 未着手           |
+|   3.6 | Video-frame measurement and Worker optimization                 | 完了 (`9706e83`) |
 |     4 | Idle timeout core + hard camera suspend                         | 未着手           |
 |     5 | Screensaver + interaction-based resume                          | 未着手           |
 |     6 | Preferences (idle timeout + capture mode)                       | 未着手           |
@@ -477,7 +477,7 @@ baseline rasterが62 msに留まったため、`bitmaprenderer`の実装優先�
 
 ### Deferred decisions
 
-- Worker + OffscreenCanvas後も`videoFramePngEncode`がdominantである場合だけ、ultra-fast low/no-compression PNGとsingle-thread Wasm SIMDを独立benchmarkする。
+- Worker + OffscreenCanvas後も`videoFramePngEncode`がdominantであり、product latency目標を満たさない場合だけ、ultra-fast low/no-compression PNGとsingle-thread Wasm SIMDを独立benchmarkする。今回の実測ではphoto routeと同等以上へ到達したため導入しない。
 - generic libpng WASM、Wasm threads、WebGPU、WebCodecs VideoEncoderは「Wasm / hardware / GPUだから速い」という理由では採用しない。
 - performance CIへ固定ms thresholdを置かない。CIはstage semantics、resource cleanup、fallback、privacy、correctnessをgateし、Android latencyはmanual QAで比較する。
 
@@ -486,19 +486,38 @@ baseline rasterが62 msに留まったため、`bitmaprenderer`の実装優先�
 - unchanged main-thread baselineで新duration stageが正しい順序・意味で記録される。
 - Worker success、unsupported、initialization failure、runtime failure、stale response、concurrent job、timeout、dispose cleanupを確認する。
 - transferred `ImageBitmap`のownership / cleanupとfull canvas backing store解放を全exit pathで確認する。
-- 2D / bitmaprendererのactual routeがdiagnosticsへ入り、unsupported時は2Dまたはmain-thread baselineへ安全にfallbackする。
+- Worker 2D / main-thread baselineのactual routeがdiagnosticsへ入り、unsupported時はmain-thread baselineへ安全にfallbackする。`bitmaprenderer`はbaseline rasterが支配的でなかったため未導入とする。
 - thumbnail用full-resolution処理がClipboard critical path前に開始しない。
 - native photo routeのdecode-once、native history Blob、portable Clipboard PNG、thumbnail遅延、Worker fallbackにregressionがない。
 - same-origin Worker bundle、`connect-src 'none'`、no Service Worker、no network、no persistent image storageを維持する。
 - `npm run verify`を通し、Android実機で同一3000×4000 camera modeのbaseline / Worker routeを記録する。
 
+### Measured outcome and decision
+
+```text
+3000×4000 / Chrome 150 / Android 10
+
+                         Worker run 1   Worker run 2   main-thread baseline
+frame acquisition             200 ms          85 ms                0 ms
+Worker handoff                106 ms          41 ms           未実行
+raster                         10 ms          87 ms               62 ms
+PNG encode                   1580 ms        1682 ms             9774 ms
+representation ready         1865 ms        2041 ms            10049 ms
+browser / OS                 1228 ms         578 ms              813 ms
+Clipboard settled            3093 ms        2620 ms            10862 ms
+thumbnail                     761 ms         912 ms             1405 ms
+```
+
+Worker 2DによりPNG encodeは平均1631 msとなりbaseline比で約83%減少、Clipboard完了は2620〜3093 msとなり約3.5〜4.1倍高速化した。native photo routeの3061 msに対して同等または高速であり、3000×4000 preview frameを使う目的を解像度低下なしで達成した。
+
+`createImageBitmap(video)`とhandoffは合計126〜306 ms、Worker rasterは10〜87 msであり、次の最適化対象として`MediaStreamTrackProcessor`や`bitmaprenderer`を導入する根拠はない。Worker PNGは依然最大のapplication stageだが、photo routeと同等のproduct latencyへ到達し、browser / OS Clipboardも578〜1228 msを占めるため、Wasm / custom PNG encoderはTCBとmemory surfaceを増やす利益が確認できない。Worker 2Dをdefaultとして確定し、main-thread Canvasをportable fallbackと診断baselineとして残す。
+
 ### Commits
 
 ```text
-perf: instrument video-frame capture stages
-perf: add video-frame worker prototype
-perf: select measured video-frame pipeline
-docs: complete phase 3.6 video-frame optimization
+dd30d53 perf: instrument video-frame capture stages (#13)
+9706e83 perf: add video-frame worker prototype
+04dc7a4 docs: record video-frame worker benchmark procedure
 ```
 
 ## 6. Phase 4: Idle timeout core + hard camera suspend

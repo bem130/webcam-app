@@ -768,6 +768,8 @@ video-frame routeのmain-thread baselineは、algorithmを変えず`videoFrameAc
 
 Worker経路では`createImageBitmap(video)`のsettlementを`videoFrameAcquire`、transferable付き`postMessage()`からWorker accepted応答までを`videoFrameTransfer`、Worker内のcontext準備と`drawImage(bitmap, ...)`を`videoFrameRaster`、`convertToBlob()`を`videoFramePngEncode`として記録する。main threadでtransferに失敗したbitmapとWorkerがownershipを得たbitmapを、それぞれの所有側で明示的にcloseする。通常はWorker 2Dを選び、同一buildの`?videoFramePipeline=canvas`をsession-only baseline診断とする。
 
+3000×4000 Android実測ではWorker 2DのPNG encodeが1580〜1682 ms、Clipboard完了が2620〜3093 msとなった。main-thread baselineの9774 ms / 10862 msに対し、PNG encodeを約83%削減し、native photo routeのClipboard完了3061 msと同等または高速になったため、Worker 2Dをdefaultとして確定する。`bitmaprenderer`、`MediaStreamTrackProcessor`、Wasm PNGは追加せず、今後の測定で別stageが再び支配的になった場合だけ再検討する。
+
 ## 17. Testing strategy
 
 ### 17.1 Unit tests
