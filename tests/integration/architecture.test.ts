@@ -78,7 +78,7 @@ describe("architecture dependency contract", () => {
     expect(topbarBackToFront).toEqual([...topbarBackToFront].sort((left, right) => left - right));
   });
 
-  it("places the suspension view above the camera and below transient app overlays by render order", () => {
+  it("places background suspension and typed app overlays above the camera by render order", () => {
     const app = readFileSync("src/ui/app.tsx", "utf8");
     const styles = readFileSync("src/styles/app.css", "utf8");
     const backToFront = ["<CameraView", "<SuspendedView", "<AppOverlayPlane"].map((token) =>
@@ -88,6 +88,7 @@ describe("architecture dependency contract", () => {
     expect(backToFront.every((index) => index >= 0)).toBe(true);
     expect(backToFront).toEqual([...backToFront].sort((left, right) => left - right));
     expect(styles).toMatch(/\.suspended-card\s*{[^}]*position:\s*relative;/s);
+    expect(styles).toMatch(/\.screensaver\s*{[^}]*position:\s*fixed;/s);
   });
 });
 

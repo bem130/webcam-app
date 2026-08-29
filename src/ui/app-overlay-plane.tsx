@@ -1,7 +1,7 @@
 import { Fragment, type ComponentChildren } from "preact";
 
 /** Normal-document overlays, ordered from back to front by render order. */
-export const APP_OVERLAY_ORDER = ["feedback", "memoryWarning"] as const;
+export const APP_OVERLAY_ORDER = ["screensaver", "feedback", "memoryWarning"] as const;
 
 /** Keep empty while DOM order is sufficient. Add only semantic names, never numbers. */
 export const GENERATED_Z_INDEX_LAYERS: readonly string[] = [];

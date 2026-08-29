@@ -14,6 +14,7 @@ import { CameraIcon, ChevronIcon, SwapIcon } from "./icons";
 type CameraViewProps = Readonly<{
   videoRef: RefObject<HTMLVideoElement>;
   placeholderRef: RefObject<HTMLCanvasElement>;
+  shutterRef: RefObject<HTMLButtonElement>;
   cameraState: CameraState;
   cameras: readonly CameraDescriptor[];
   currentCamera: CameraDescriptor | null;
@@ -39,6 +40,7 @@ export function CameraView(props: CameraViewProps) {
   const {
     videoRef,
     placeholderRef,
+    shutterRef,
     cameraState,
     cameras,
     currentCamera,
@@ -186,6 +188,7 @@ export function CameraView(props: CameraViewProps) {
           </button>
 
           <button
+            ref={shutterRef}
             class="shutter"
             type="button"
             aria-label="撮影してClipboardへコピー"
