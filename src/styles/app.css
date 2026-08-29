@@ -378,11 +378,11 @@
 
 .status-pill {
   position: fixed;
-  top: max(72px, calc(env(safe-area-inset-top) + 64px));
-  left: 50%;
+  bottom: max(112px, calc(env(safe-area-inset-bottom) + 104px));
+  left: max(16px, env(safe-area-inset-left));
   display: flex;
   width: min(calc(100% - 32px), max-content);
-  max-width: 600px;
+  max-width: 420px;
   min-height: 44px;
   align-items: center;
   gap: 10px;
@@ -392,7 +392,6 @@
   color: #fff;
   background: #1c1c1ef2;
   box-shadow: 0 8px 30px rgb(0 0 0 / 35%);
-  transform: translateX(-50%);
 }
 .status-pill--success {
   border-color: rgb(50 215 75 / 58%);

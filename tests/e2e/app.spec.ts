@@ -96,6 +96,7 @@ test("captures, copies, retains history in memory, and clears it on reload", asy
     browserName !== "chromium",
     "The deterministic fake camera is configured for Chromium.",
   );
+  await page.setViewportSize({ width: 390, height: 844 });
   await installClipboardMock(page);
   const requestsAfterLoad: string[] = [];
   await page.goto("./");
@@ -111,11 +112,19 @@ test("captures, copies, retains history in memory, and clears it on reload", asy
   await expect(
     page.getByRole("status").filter({ hasText: "Clipboardにコピーしました。" }),
   ).toBeVisible();
+  const status = page.getByRole("status").filter({ hasText: "Clipboardにコピーしました。" });
+  const [statusBox, shutterBox] = await Promise.all([status.boundingBox(), shutter.boundingBox()]);
+  expect(statusBox).not.toBeNull();
+  expect(shutterBox).not.toBeNull();
+  if (statusBox === null || shutterBox === null) throw new Error("expected visible controls");
+  expect(rectanglesOverlap(statusBox, shutterBox)).toBe(false);
   await expect.poll(() => page.evaluate(() => window.__clipboardWriteCount)).toBe(1);
   const cameraAccessibility = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();
   expect(cameraAccessibility.violations).toEqual([]);
+
+  await expect(status).toBeHidden({ timeout: 4_000 });
 
   await page.getByRole("button", { name: "履歴を開く（1件）" }).click();
   await expect(page.getByRole("heading", { name: "撮影履歴" })).toBeVisible();
@@ -234,6 +243,18 @@ test("disables the photo option and uses video frame when unsupported", async ({
   await expect(page.getByText("動画フレームraster準備", { exact: true })).toBeVisible();
   await expect(page.getByText("動画フレームPNG encode", { exact: true })).toBeVisible();
 });
+
+function rectanglesOverlap(
+  left: Readonly<{ x: number; y: number; width: number; height: number }>,
+  right: Readonly<{ x: number; y: number; width: number; height: number }>,
+): boolean {
+  return !(
+    left.x + left.width <= right.x ||
+    right.x + right.width <= left.x ||
+    left.y + left.height <= right.y ||
+    right.y + right.height <= left.y
+  );
+}
 
 async function installPlatformSpies(page: Page): Promise<void> {
   await page.addInitScript(() => {
