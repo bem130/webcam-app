@@ -19,13 +19,14 @@
 |   2.5 | Architecture and repository verification gates                  | 完了 (`ac16b78`) |
 |     3 | Native still capture via `ImageCapture` progressive enhancement | 完了 (`8b0a83a`) |
 |   3.5 | Capture pipeline measurement and worker optimization            | 完了 (`a163a8d`) |
+|   3.6 | Video-frame measurement and Worker optimization                 | 未着手           |
 |     4 | Idle timeout core + hard camera suspend                         | 未着手           |
 |     5 | Screensaver + interaction-based resume                          | 未着手           |
 |     6 | Preferences (idle timeout + capture mode)                       | 未着手           |
 |     7 | Acceptance automation + high-resolution memory hardening        | 未着手           |
 |     8 | Documentation + release hardening                               | 未着手           |
 
-各phaseは単独でbuild・test・deploy可能な状態で完了させる。複数phaseを一つのcommitへまとめず、phaseごとに実装、検証、diff review、commit、pushを行う。Phase 3の`ImageCapture`が利用できない環境でも、Phase 2のvideo-frame captureだけで完全に利用可能な状態を保つ。Phase 3.5は実機で顕在化したcapture / Clipboard latencyをPhase 4より先に扱い、Phase 4以降のidle lifecycleへ重い画像処理を持ち越さない。
+各phaseは単独でbuild・test・deploy可能な状態で完了させる。複数phaseを一つのcommitへまとめず、phaseごとに実装、検証、diff review、commit、pushを行う。Phase 3の`ImageCapture`が利用できない環境でも、Phase 2のvideo-frame captureだけで完全に利用可能な状態を保つ。Phase 3.5と3.6は実機で顕在化したcapture / Clipboard latencyをPhase 4より先に扱い、Phase 4以降のidle lifecycleへ重い画像処理を持ち越さない。
 
 V2開発完了までは、本書をV2変更事項のnormative specificationとする。`docs/design.md`または既存実装と競合する場合は本書を優先し、各phaseで該当する`design.md` contractもincrementalに同期する。
 
@@ -367,6 +368,138 @@ type CaptureMilestone = Readonly<{
 ### Commit
 
 `perf: complete phase 3.5 capture pipeline optimization`
+
+## 5.6 Phase 3.6: Video-frame measurement and Worker optimization
+
+### Observed baseline and problem statement
+
+同一Android端末・同一Chrome 150・同一3000×4000 camera modeで、native photo routeはClipboard完了まで約3455 ms、video-frame routeは約5953 msである。video-frame routeでは集約済みの`videoFrameEncode`が約5035 msを占める。
+
+```text
+current video-frame route
+
+HTMLVideoElement (3000×4000)
+        ↓ main thread
+HTMLCanvasElement.drawImage(video)
+        ↓
+HTMLCanvasElement.toBlob(image/png)
+        ↓
+ClipboardItem(Promise<PNG>)
+        ↓ Clipboard settlement
+PNGをfull-resolution decode
+        ↓
+320 px thumbnail JPEG
+```
+
+Phase 3.5のpersistent Worker / decode-onceはnative Blob routeだけに適用されており、video-frame routeはmain-thread Canvasのままである。したがって、Workerを先に正解と決めず、まず現経路のframe取得、raster準備、PNG encodeを分離して実測する。
+
+### Timing contract
+
+`CaptureTimingMeasurement`のdurationとmilestoneの判別を維持する。新しいstageは全て`kind: "duration"`かつ`durationMs`であり、shutter-relativeな`clipboardRepresentationReady` / `clipboardSettled`とは混在させない。
+
+```ts
+type VideoFrameDurationStage =
+  "videoFrameAcquire" | "videoFrameTransfer" | "videoFrameRaster" | "videoFramePngEncode";
+```
+
+- `videoFrameAcquire`: capture対象frameのvalidation開始から、main threadでcurrent frameを表すresourceを取得するまで。baselineではdimensions / readiness validation、Worker候補では`createImageBitmap(video)`のsettlementを含む。
+- `videoFrameTransfer`: transferableを添付した`postMessage()`開始からWorkerのaccepted acknowledgement受信まで。物理memory copyだけではなく、Worker dispatch / queue / acknowledgementを含むhandoff round-tripであり、zero-copy時間とは呼ばない。main-thread baselineでは未実行とする。
+- `videoFrameRaster`: encode対象canvasのcontext取得とframe配置。baselineでは`drawImage(video, ...)`、Worker 2Dでは`drawImage(bitmap, ...)`、`bitmaprenderer`候補では`transferFromImageBitmap()`を含む。
+- `videoFramePngEncode`: `toBlob("image/png")`または`convertToBlob({ type: "image/png" })`開始からPNG Blob完成まで。
+
+既存の集約`videoFrameEncode`は新stageと同時に合算値として表示しない。旧sessionとの永続互換性は不要であり、history detailsでは新しいstageを個別表示する。支配stageの判断は固定ms thresholdではなく、同一端末・同一camera・同一dimensionsの比較で行う。
+
+### Subphase 3.6A: Instrument the unchanged baseline first
+
+最初のdeployではalgorithmを変えず、既存の`HTMLVideoElement → HTMLCanvasElement.drawImage() → toBlob()`を小さなbaseline adapterへ分離して詳細timingを追加する。
+
+- Canvas contextは既存どおりopaque camera imageとして扱い、encode完了後にbacking storeを1×1へ解放する。
+- Clipboard writeはshutter handler内で同期的に開始し、最初の`await`より前というWebKit user-activation contractを維持する。
+- thumbnailはClipboard settlement後にのみ開始する。ただし現baselineでPNGをfull-resolution再decodeしている事実はtimingへ残し、3.6Aでは同時に変更しない。
+- Androidで`videoFrameAcquire`、`videoFrameRaster`、`videoFramePngEncode`、Clipboard milestones、thumbnailを記録し、5035 msの内訳を確定する。
+
+3.6Aは単独でverify・deployし、実機baselineを得る。Worker primary routeやWASMの採否はこの測定前に決めない。
+
+### Subphase 3.6B: Typed Worker prototype and A/B comparison
+
+3.6A測定後、現在のpersistent same-origin module Workerをtyped discriminated unionで拡張する。第一prototypeは互換性とboundaryの単純さから次とする。
+
+```text
+main thread
+HTMLVideoElement
+    ↓ createImageBitmap(video)
+transferable ImageBitmap
+    ↓ postMessage(message, [bitmap])
+
+persistent Worker
+ImageBitmap
+    ↓ 2D drawImage または bitmaprenderer transfer
+OffscreenCanvas
+    ↓ convertToBlob(image/png)
+PNG Blob
+```
+
+HTML Standardでは`HTMLVideoElement`が`createImageBitmap()`のsourceであり、current playback positionのframeからnatural dimensionsのbitmapを作る。`ImageBitmap`はtransferableであり、transfer後のmain-thread objectはdetachedされる。transferが全実装でzero-copyになるとは仮定しない。[HTML Standard: ImageBitmap](https://html.spec.whatwg.org/multipage/imagebitmap-and-animations.html) / [MDN: Transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects)
+
+Worker protocolはnative still jobとvideo-frame jobを混同しない。
+
+```ts
+type ImageProcessingRequest =
+  PrepareNativeImageRequest | PrepareVideoFrameRequest | EncodeThumbnailRequest | DiscardRequest;
+```
+
+job IDでconcurrent request、accepted acknowledgement、stale response、timeout、crash、disposeを識別する。UI componentへ`Worker`、`ImageBitmap`、`OffscreenCanvas`を漏らさない。main threadでWorkerへ渡せなかったbitmapとWorkerがownershipを受け取ったbitmapの双方について、success / error / timeout / dispose時の`close()`またはdetached lifecycleをtestする。
+
+### Raster A/B and baseline selection
+
+Worker内のrasterizerは次のtyped strategyとして比較可能にする。
+
+```ts
+type VideoFrameRasterizer = "2d" | "bitmapRenderer";
+```
+
+- `2d`: `{ alpha: false }`の2D contextへ`drawImage(bitmap, ...)`する。
+- `bitmapRenderer`: support時だけ`getContext("bitmaprenderer", { alpha: false })`と`transferFromImageBitmap()`を使う。ownershipがcanvasへ移るため、同じbitmapをthumbnail用に再利用する前提を置かない。
+- `bitmaprenderer`は低overhead / intermediate compositing回避を目的とする標準APIだが、端末上のzero-copyや速度向上は保証されない。unsupported / failure時は2Dへfallbackする。[HTML Standard: ImageBitmap rendering context](https://html.spec.whatwg.org/multipage/canvas.html#the-imagebitmaprenderingcontext-interface)
+
+同一buildでbaseline / Worker 2D / Worker bitmaprendererをsession内だけで比較できる診断用選択を用意し、actual processing routeをhistory detailsへ記録する。画像や選択結果を永続化しない。Android実測後に最速かつ安定したrouteをdefaultへ昇格し、baselineはportable fallback / contract testとして残す。
+
+### MediaStreamTrackProcessor decision
+
+`MediaStreamTrackProcessor + VideoFrame`はframeをWorkerへ直接流せる可能性があるが、現時点でBaselineではなく、browserによりWindow / Dedicated Workerのどちらへ公開されるかも不一致である。Phase 3.6のprimary routeにはせず、`createImageBitmap(video)`後も`videoFrameAcquire`が支配的な場合だけChrome Android向けoptional experimentとして再検討する。[MDN: MediaStreamTrackProcessor](https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrackProcessor)
+
+### Thumbnail critical path
+
+- Clipboard PNG生成とbrowser / OS Clipboard settlementより前に、thumbnailのfull-resolution PNG decodeを開始しない。
+- Worker frame処理中に320 px rasterを準備する案と、Clipboard settlement後にcurrent frameまたはPNGから縮小する案を別strategyとして測定する。
+- 320 px raster準備が`clipboardRepresentationReady`を有意に遅らせる場合はcritical pathへ入れない。
+- どのstrategyでもClipboard settlementまで保持するfull-resolution bitmap / canvasを増やさず、320 px rasterまたはBlobだけを保持する。
+
+### Deferred decisions
+
+- Worker + OffscreenCanvas後も`videoFramePngEncode`がdominantである場合だけ、ultra-fast low/no-compression PNGとsingle-thread Wasm SIMDを独立benchmarkする。
+- generic libpng WASM、Wasm threads、WebGPU、WebCodecs VideoEncoderは「Wasm / hardware / GPUだから速い」という理由では採用しない。
+- performance CIへ固定ms thresholdを置かない。CIはstage semantics、resource cleanup、fallback、privacy、correctnessをgateし、Android latencyはmanual QAで比較する。
+
+### Verification gates
+
+- unchanged main-thread baselineで新duration stageが正しい順序・意味で記録される。
+- Worker success、unsupported、initialization failure、runtime failure、stale response、concurrent job、timeout、dispose cleanupを確認する。
+- transferred `ImageBitmap`のownership / cleanupとfull canvas backing store解放を全exit pathで確認する。
+- 2D / bitmaprendererのactual routeがdiagnosticsへ入り、unsupported時は2Dまたはmain-thread baselineへ安全にfallbackする。
+- thumbnail用full-resolution処理がClipboard critical path前に開始しない。
+- native photo routeのdecode-once、native history Blob、portable Clipboard PNG、thumbnail遅延、Worker fallbackにregressionがない。
+- same-origin Worker bundle、`connect-src 'none'`、no Service Worker、no network、no persistent image storageを維持する。
+- `npm run verify`を通し、Android実機で同一3000×4000 camera modeのbaseline / Worker routeを記録する。
+
+### Commits
+
+```text
+perf: instrument video-frame capture stages
+perf: add video-frame worker prototype
+perf: select measured video-frame pipeline
+docs: complete phase 3.6 video-frame optimization
+```
 
 ## 6. Phase 4: Idle timeout core + hard camera suspend
 
