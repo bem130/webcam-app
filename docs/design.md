@@ -764,6 +764,10 @@ video-frame routeのmain-thread baselineは、algorithmを変えず`videoFrameAc
 
 3000×4000 Android baselineのstage内訳をdeploy後に取得してからWorker prototypeのdefault採否を判断する。現行main-thread adapterは比較・fallback用に残し、測定前にWorker、`bitmaprenderer`、Wasmを高速と決め付けない。
 
+実機baselineではframe validation 0 ms、`drawImage()`を含むraster 62 msに対し、main-thread `toBlob("image/png")`が9774 ms、Clipboard完了が10862 msだった。この結果に基づき、video-frameのprimary processingを`createImageBitmap(video)`、transferable handoff、persistent Worker、2D `OffscreenCanvas.convertToBlob()`へ進める。Worker unavailable / initialization failure / runtime failure / timeout時は上記baselineへfallbackする。
+
+Worker経路では`createImageBitmap(video)`のsettlementを`videoFrameAcquire`、transferable付き`postMessage()`からWorker accepted応答までを`videoFrameTransfer`、Worker内のcontext準備と`drawImage(bitmap, ...)`を`videoFrameRaster`、`convertToBlob()`を`videoFramePngEncode`として記録する。main threadでtransferに失敗したbitmapとWorkerがownershipを得たbitmapを、それぞれの所有側で明示的にcloseする。通常はWorker 2Dを選び、同一buildの`?videoFramePipeline=canvas`をsession-only baseline診断とする。
+
 ## 17. Testing strategy
 
 ### 17.1 Unit tests

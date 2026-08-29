@@ -38,6 +38,9 @@
 - [ ] native JPEG等はhistoryでnative MIMEを維持し、ClipboardへはPNGとして実際にpasteできる。
 - [ ] 3000×4000と2448×3264を含むAndroid実機でstage durationとshutter-relative milestoneを記録し、native artifact、Clipboard用PNG変換、representation ready、browser / OS Clipboard処理、thumbnailを区別できる。
 - [ ] 3000×4000の動画フレームで`動画フレーム取得`、`Worker handoff`（baselineでは未実行）、`raster準備`、`PNG encode`を記録し、旧`動画フレームPNG` 5035 msの内訳を確定する。
+- [ ] 通常URLの3000×4000動画フレームで「動画処理経路」が`Worker OffscreenCanvas (2D)`となり、`動画フレーム取得`、`Worker handoff`、`raster準備`、`PNG encode`を記録できる。
+- [ ] 同じbuildを`?videoFramePipeline=canvas`付きで開くと「動画処理経路」が`main-thread Canvas`となり、Worker handoffは未実行になる。画像や診断選択はreloadを越えて保存されない。
+- [ ] Worker経路とCanvas baselineで、Clipboard完了までの時間を同じcamera、同じ3000×4000、近い被写体条件で各3回以上測定する。固定ms thresholdではなく中央値とstage構成を比較する。
 - [ ] 3000×4000 native still routeの約3秒という変更前baselineと同じcamera・解像度で比較し、Worker route / fallback routeと各stageを記録する。
 - [ ] copy の成功・失敗が text と screen reader live region で判別できる。
 - [ ] Clipboard permission を拒否しても画像が履歴へ残り、「再コピー」が動作する。

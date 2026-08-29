@@ -373,7 +373,7 @@ type CaptureMilestone = Readonly<{
 
 ### Observed baseline and problem statement
 
-同一Android端末・同一Chrome 150・同一3000×4000 camera modeで、native photo routeはClipboard完了まで約3455 ms、video-frame routeは約5953 msである。video-frame routeでは集約済みの`videoFrameEncode`が約5035 msを占める。
+同一Android端末・同一Chrome 150・同一3000×4000 camera modeの最新測定では、native photo routeはClipboard完了まで約3061 ms、video-frame routeは約10862 msである。細分化後のvideo-frame baselineはframe validation 0 ms、raster 62 ms、main-thread PNG encode 9774 ms、browser / OS Clipboard 813 msであり、PNG encodeが全体の約90%を占める。
 
 ```text
 current video-frame route
@@ -391,7 +391,7 @@ PNGをfull-resolution decode
 320 px thumbnail JPEG
 ```
 
-Phase 3.5のpersistent Worker / decode-onceはnative Blob routeだけに適用されており、video-frame routeはmain-thread Canvasのままである。したがって、Workerを先に正解と決めず、まず現経路のframe取得、raster準備、PNG encodeを分離して実測する。
+Phase 3.5のpersistent Worker / decode-onceはnative Blob routeだけに適用されており、video-frame baselineはmain-thread Canvasである。3.6Aの実測により`drawImage()`ではなく`toBlob()`が支配的と確定したため、3.6Bでは既存Workerをvideo frameへ拡張する。
 
 ### Timing contract
 
@@ -462,7 +462,7 @@ type VideoFrameRasterizer = "2d" | "bitmapRenderer";
 - `bitmapRenderer`: support時だけ`getContext("bitmaprenderer", { alpha: false })`と`transferFromImageBitmap()`を使う。ownershipがcanvasへ移るため、同じbitmapをthumbnail用に再利用する前提を置かない。
 - `bitmaprenderer`は低overhead / intermediate compositing回避を目的とする標準APIだが、端末上のzero-copyや速度向上は保証されない。unsupported / failure時は2Dへfallbackする。[HTML Standard: ImageBitmap rendering context](https://html.spec.whatwg.org/multipage/canvas.html#the-imagebitmaprenderingcontext-interface)
 
-同一buildでbaseline / Worker 2D / Worker bitmaprendererをsession内だけで比較できる診断用選択を用意し、actual processing routeをhistory detailsへ記録する。画像や選択結果を永続化しない。Android実測後に最速かつ安定したrouteをdefaultへ昇格し、baselineはportable fallback / contract testとして残す。
+baseline rasterが62 msに留まったため、`bitmaprenderer`の実装優先度は下げる。まず同一buildで通常URLのWorker 2Dと`?videoFramePipeline=canvas`のbaselineを比較し、actual processing routeをhistory detailsへ記録する。画像や選択結果を永続化しない。Worker 2DのAndroid実測後に最速かつ安定したrouteを確定し、baselineはportable fallback / contract testとして残す。`bitmaprenderer`はWorker 2Dでもrasterが支配的と判明した場合だけ追加する。
 
 ### MediaStreamTrackProcessor decision
 
