@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  browserImageProcessingPort,
   CanvasImageProcessingPort,
   WorkerImageProcessingPort,
   type ImageProcessingPort,
@@ -12,6 +13,7 @@ import type {
 } from "../../src/platform/image-processing-protocol";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -37,9 +39,212 @@ describe("Canvas image processing fallback", () => {
     expect(close).toHaveBeenCalledOnce();
     expect(canvases).toHaveLength(0);
   });
+
+  it("uses the Canvas video baseline when Worker initialization fails", async () => {
+    vi.stubGlobal("OffscreenCanvas", class {});
+    vi.stubGlobal("createImageBitmap", vi.fn());
+    vi.stubGlobal(
+      "Worker",
+      class {
+        constructor() {
+          throw new Error("worker blocked");
+        }
+      },
+    );
+    const port = browserImageProcessingPort();
+    const fallbackResult = fakeEncodedVideoFrame();
+    const fallback = vi.fn(() => Promise.resolve(fallbackResult));
+
+    await expect(
+      port.processVideoFrame({} as HTMLVideoElement, fallback, () => performance.now()),
+    ).resolves.toBe(fallbackResult);
+    expect(fallback).toHaveBeenCalledOnce();
+    port.dispose();
+  });
+
+  it("keeps the measured main-thread encoder as the video-frame fallback", async () => {
+    const port = new CanvasImageProcessingPort();
+    const encoded = Promise.resolve(fakeEncodedVideoFrame());
+    const fallback = vi.fn(() => encoded);
+
+    await expect(
+      port.processVideoFrame({} as HTMLVideoElement, fallback, () => performance.now()),
+    ).resolves.toEqual(await encoded);
+    expect(fallback).toHaveBeenCalledOnce();
+  });
 });
 
 describe("Worker image processing adapter", () => {
+  it("transfers a current video bitmap and reports acquisition, handoff, raster, and encode", async () => {
+    const close = vi.fn();
+    const bitmap = { width: 3000, height: 4000, close } as unknown as ImageBitmap;
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(() => Promise.resolve(bitmap)),
+    );
+    const worker = new FakeWorker();
+    const fallback = vi.fn(() => Promise.resolve(fakeEncodedVideoFrame()));
+    const port = new WorkerImageProcessingPort(worker, fakeFallback());
+    let tick = 0;
+    const result = port.processVideoFrame(
+      { videoWidth: 3000, videoHeight: 4000 } as HTMLVideoElement,
+      fallback,
+      () => ++tick,
+    );
+
+    await vi.waitFor(() => expect(worker.videoFrameJobIds()).toHaveLength(1));
+    const jobId = worker.videoFrameJobIds()[0]!;
+    expect(worker.transfers).toEqual([[bitmap]]);
+    worker.emit({ type: "videoFrameAccepted", jobId });
+    const png = new Blob(["png"], { type: "image/png" });
+    worker.emit({
+      type: "videoFrameReady",
+      jobId,
+      blob: png,
+      width: 3000,
+      height: 4000,
+      rasterDurationMs: 62,
+      pngEncodeDurationMs: 558,
+    });
+
+    await expect(result).resolves.toEqual({
+      blob: png,
+      width: 3000,
+      height: 4000,
+      durations: {
+        videoFrameAcquire: 1,
+        videoFrameTransfer: { tag: "some", value: 1 },
+        videoFrameRaster: 62,
+        videoFramePngEncode: 558,
+      },
+    });
+    expect(fallback).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    port.dispose();
+  });
+
+  it("isolates concurrent video jobs and ignores stale responses", async () => {
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn().mockResolvedValueOnce(fakeBitmap(1, 1)).mockResolvedValueOnce(fakeBitmap(2, 2)),
+    );
+    const worker = new FakeWorker();
+    const port = new WorkerImageProcessingPort(worker, fakeFallback());
+    const fallback = () => Promise.resolve(fakeEncodedVideoFrame());
+    const first = port.processVideoFrame({} as HTMLVideoElement, fallback, () => performance.now());
+    const second = port.processVideoFrame({} as HTMLVideoElement, fallback, () =>
+      performance.now(),
+    );
+    await vi.waitFor(() => expect(worker.videoFrameJobIds()).toHaveLength(2));
+    const [firstId, secondId] = worker.videoFrameJobIds();
+    if (firstId === undefined || secondId === undefined) throw new Error("expected video jobs");
+
+    worker.emit({ type: "videoFrameAccepted", jobId: 999_999 });
+    worker.emit({ type: "videoFrameAccepted", jobId: secondId });
+    worker.emit(videoFrameReady(secondId, 2, 2));
+    worker.emit({ type: "videoFrameAccepted", jobId: firstId });
+    worker.emit(videoFrameReady(firstId, 1, 1));
+
+    await expect(first).resolves.toMatchObject({ width: 1, height: 1 });
+    await expect(second).resolves.toMatchObject({ width: 2, height: 2 });
+    port.dispose();
+  });
+
+  it("falls back when the Worker fails after accepting a transferred frame", async () => {
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(() => Promise.resolve(fakeBitmap(3000, 4000))),
+    );
+    const worker = new FakeWorker();
+    const fallbackResult = fakeEncodedVideoFrame();
+    const fallback = vi.fn(() => Promise.resolve(fallbackResult));
+    const port = new WorkerImageProcessingPort(worker, fakeFallback());
+    const result = port.processVideoFrame({} as HTMLVideoElement, fallback, () =>
+      performance.now(),
+    );
+    await vi.waitFor(() => expect(worker.videoFrameJobIds()).toHaveLength(1));
+    worker.fail();
+
+    await expect(result).resolves.toBe(fallbackResult);
+    expect(fallback).toHaveBeenCalledOnce();
+    port.dispose();
+  });
+
+  it("keeps the Worker alive for native images while selecting the video Canvas baseline", async () => {
+    const createBitmap = vi.fn(() => Promise.resolve(fakeBitmap(3000, 4000)));
+    vi.stubGlobal("createImageBitmap", createBitmap);
+    const worker = new FakeWorker();
+    const fallbackResult = fakeEncodedVideoFrame();
+    const fallback = vi.fn(() => Promise.resolve(fallbackResult));
+    const port = new WorkerImageProcessingPort(worker, fakeFallback(), "mainThreadCanvas");
+
+    await expect(
+      port.processVideoFrame({} as HTMLVideoElement, fallback, () => performance.now()),
+    ).resolves.toBe(fallbackResult);
+    expect(fallback).toHaveBeenCalledOnce();
+    expect(createBitmap).not.toHaveBeenCalled();
+    expect(worker.videoFrameJobIds()).toEqual([]);
+    port.dispose();
+  });
+
+  it("falls back and closes an untransferred bitmap when postMessage throws", async () => {
+    const close = vi.fn();
+    const bitmap = fakeBitmap(3000, 4000, close);
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(() => Promise.resolve(bitmap)),
+    );
+    const worker = new FakeWorker();
+    worker.throwOnPost = true;
+    const fallbackResult = fakeEncodedVideoFrame();
+    const fallback = vi.fn(() => Promise.resolve(fallbackResult));
+    const port = new WorkerImageProcessingPort(worker, fakeFallback());
+
+    await expect(
+      port.processVideoFrame({} as HTMLVideoElement, fallback, () => performance.now()),
+    ).resolves.toBe(fallbackResult);
+    expect(close).toHaveBeenCalledOnce();
+    port.dispose();
+  });
+
+  it("times out a silent video-frame job and falls back", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(() => Promise.resolve(fakeBitmap(3000, 4000))),
+    );
+    const worker = new FakeWorker();
+    const fallback = vi.fn(() => Promise.resolve(fakeEncodedVideoFrame()));
+    const port = new WorkerImageProcessingPort(worker, fakeFallback());
+    const result = port.processVideoFrame({} as HTMLVideoElement, fallback, () =>
+      performance.now(),
+    );
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    await expect(result).resolves.toEqual(fakeEncodedVideoFrame());
+    expect(fallback).toHaveBeenCalledOnce();
+    port.dispose();
+  });
+
+  it("rejects an active video-frame job on dispose without starting fallback work", async () => {
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(() => Promise.resolve(fakeBitmap(3000, 4000))),
+    );
+    const worker = new FakeWorker();
+    const fallback = vi.fn(() => Promise.resolve(fakeEncodedVideoFrame()));
+    const port = new WorkerImageProcessingPort(worker, fakeFallback());
+    const result = port.processVideoFrame({} as HTMLVideoElement, fallback, () =>
+      performance.now(),
+    );
+    await vi.waitFor(() => expect(worker.videoFrameJobIds()).toHaveLength(1));
+    port.dispose();
+
+    await expect(result).rejects.toThrow("pngEncodingFailed");
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
   it("uses typed job messages and keeps thumbnail encoding deferred", async () => {
     const worker = new FakeWorker();
     const fallback = fakeFallback();
@@ -123,11 +328,15 @@ describe("Worker image processing adapter", () => {
 
 class FakeWorker implements ImageProcessingWorker {
   readonly messages: ImageProcessingRequest[] = [];
+  readonly transfers: Transferable[][] = [];
+  throwOnPost = false;
   #messageHandler: ((message: ImageProcessingResponse) => void) | undefined;
   #errorHandler: (() => void) | undefined;
 
-  postMessage(message: ImageProcessingRequest): void {
+  postMessage(message: ImageProcessingRequest, transfer: Transferable[] = []): void {
+    if (this.throwOnPost) throw new DOMException("", "DataCloneError");
     this.messages.push(message);
+    this.transfers.push(transfer);
   }
 
   terminate(): void {}
@@ -161,6 +370,12 @@ class FakeWorker implements ImageProcessingWorker {
     if (request === undefined) throw new Error("expected a preparation job");
     return request.jobId;
   }
+
+  videoFrameJobIds(): number[] {
+    return this.messages.flatMap((message) =>
+      message.type === "prepareVideoFrame" ? [message.jobId] : [],
+    );
+  }
 }
 
 function fakeFallback(
@@ -178,7 +393,47 @@ function fakeFallback(
       dispose: vi.fn(),
     }),
   );
-  return { prepare, dispose: vi.fn() };
+  return {
+    prepare,
+    processVideoFrame: vi.fn<ImageProcessingPort["processVideoFrame"]>((_video, fallback) =>
+      fallback(),
+    ),
+    dispose: vi.fn(),
+  };
+}
+
+function fakeEncodedVideoFrame() {
+  return {
+    blob: new Blob(["png"], { type: "image/png" }),
+    width: 640,
+    height: 480,
+    durations: {
+      videoFrameAcquire: 1,
+      videoFrameTransfer: { tag: "none" } as const,
+      videoFrameRaster: 2,
+      videoFramePngEncode: 3,
+    },
+  };
+}
+
+function fakeBitmap(width: number, height: number, close: () => void = vi.fn()): ImageBitmap {
+  return { width, height, close };
+}
+
+function videoFrameReady(
+  jobId: number,
+  width: number,
+  height: number,
+): Extract<ImageProcessingResponse, { type: "videoFrameReady" }> {
+  return {
+    type: "videoFrameReady",
+    jobId,
+    blob: new Blob(["png"], { type: "image/png" }),
+    width,
+    height,
+    rasterDurationMs: 2,
+    pngEncodeDurationMs: 3,
+  };
 }
 
 function fakeCanvas(): Readonly<{ canvas: HTMLCanvasElement }> {

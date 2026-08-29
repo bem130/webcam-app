@@ -22,6 +22,7 @@ import type { NativePhotoCapture } from "./native-photo";
 export type Dimensions = Readonly<{ width: number; height: number }>;
 export type VideoFrameEncodeDurations = Readonly<{
   videoFrameAcquire: number;
+  videoFrameTransfer: Option<number>;
   videoFrameRaster: number;
   videoFramePngEncode: number;
 }>;
@@ -118,7 +119,12 @@ export class CanvasCaptureEncoder implements CaptureEncoder {
       return {
         blob,
         ...dimensions,
-        durations: { videoFrameAcquire, videoFrameRaster, videoFramePngEncode },
+        durations: {
+          videoFrameAcquire,
+          videoFrameTransfer: none,
+          videoFrameRaster,
+          videoFramePngEncode,
+        },
       };
     } catch (cause) {
       if (isTaggedCaptureError(cause)) throw cause;
@@ -302,7 +308,7 @@ async function captureSource(
   observeTiming: (measurement: CaptureTimingMeasurement) => void,
 ): Promise<CaptureSource> {
   if (preference === "videoFrame" || nativePhoto.tag === "none") {
-    return captureVideoFrame(video, encoder, clock, observeTiming);
+    return captureVideoFrame(video, encoder, imageProcessing, clock, observeTiming);
   }
 
   const sourceStartedAt = clock();
@@ -314,7 +320,7 @@ async function captureSource(
     if (nativePhoto.value.track.readyState !== "live") {
       throw taggedCaptureError({ tag: "photoCaptureFailed" });
     }
-    return captureVideoFrame(video, encoder, clock, observeTiming);
+    return captureVideoFrame(video, encoder, imageProcessing, clock, observeTiming);
   }
   recordDuration(observeTiming, "sourceAcquisition", some(elapsed(clock, sourceStartedAt)));
 
@@ -340,19 +346,24 @@ async function captureSource(
     }
   } catch (cause) {
     if (nativePhoto.value.track.readyState !== "live") throw cause;
-    return captureVideoFrame(video, encoder, clock, observeTiming);
+    return captureVideoFrame(video, encoder, imageProcessing, clock, observeTiming);
   }
 }
 
 async function captureVideoFrame(
   video: HTMLVideoElement,
   encoder: CaptureEncoder,
+  imageProcessing: ImageProcessingPort,
   clock: () => number,
   observeTiming: (measurement: CaptureTimingMeasurement) => void,
 ): Promise<CaptureSource> {
-  const image = await encoder.encodeVideoFramePng(video, clock);
+  const image = await imageProcessing.processVideoFrame(
+    video,
+    () => encoder.encodeVideoFramePng(video, clock),
+    clock,
+  );
   recordDuration(observeTiming, "videoFrameAcquire", some(image.durations.videoFrameAcquire));
-  recordDuration(observeTiming, "videoFrameTransfer", none);
+  recordDuration(observeTiming, "videoFrameTransfer", image.durations.videoFrameTransfer);
   recordDuration(observeTiming, "videoFrameRaster", some(image.durations.videoFrameRaster));
   recordDuration(observeTiming, "videoFramePngEncode", some(image.durations.videoFramePngEncode));
   const capturedImage = {

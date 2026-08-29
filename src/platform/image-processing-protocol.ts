@@ -7,6 +7,11 @@ export type ImageProcessingRequest =
       image: Blob;
       needsClipboardPng: boolean;
     }>
+  | Readonly<{
+      type: "prepareVideoFrame";
+      jobId: number;
+      bitmap: ImageBitmap;
+    }>
   | Readonly<{ type: "encodeThumbnail"; jobId: number }>
   | Readonly<{ type: "discard"; jobId: number }>;
 
@@ -21,4 +26,15 @@ export type ImageProcessingResponse =
     }>
   | Readonly<{ type: "clipboardPngFailed"; jobId: number; error: CaptureError }>
   | Readonly<{ type: "thumbnailReady"; jobId: number; blob: Blob }>
-  | Readonly<{ type: "thumbnailFailed"; jobId: number; error: CaptureError }>;
+  | Readonly<{ type: "thumbnailFailed"; jobId: number; error: CaptureError }>
+  | Readonly<{ type: "videoFrameAccepted"; jobId: number }>
+  | Readonly<{
+      type: "videoFrameReady";
+      jobId: number;
+      blob: Blob;
+      width: number;
+      height: number;
+      rasterDurationMs: number;
+      pngEncodeDurationMs: number;
+    }>
+  | Readonly<{ type: "videoFrameFailed"; jobId: number; error: CaptureError }>;

@@ -43,6 +43,7 @@ describe("capture dimensions", () => {
 
     expect(result.durations).toEqual({
       videoFrameAcquire: 1,
+      videoFrameTransfer: { tag: "none" },
       videoFrameRaster: 1,
       videoFramePngEncode: 1,
     });

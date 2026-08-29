@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CaptureTimingMeasurement } from "../../src/core/model";
-import { some } from "../../src/core/result";
+import { none, some } from "../../src/core/result";
 import {
   beginCaptureAndCopy,
   beginCapturedImageCopy,
@@ -133,6 +133,7 @@ describe("capture operation", () => {
           dispose: vi.fn(),
         }),
       ),
+      processVideoFrame: (_video, fallback) => fallback(),
       dispose: vi.fn(),
     };
     const operation = beginCaptureAndCopy(video, {
@@ -151,6 +152,27 @@ describe("capture operation", () => {
     await expect(operation.clipboard).resolves.toMatchObject({ tag: "ok" });
     await expect(operation.thumbnail).resolves.toMatchObject({ tag: "ok" });
     expect(encodeThumbnail).toHaveBeenCalledOnce();
+  });
+
+  it("keeps video-frame thumbnail work outside the Clipboard critical path", async () => {
+    const clipboardSettlement = deferred<void>();
+    const encoder = fakeEncoder();
+    const operation = beginCaptureAndCopy(video, {
+      encoder,
+      imageProcessing: fakeImageProcessing(),
+      preference: "videoFrame",
+      clipboardPort: {
+        createItem: vi.fn(() => ({}) as ClipboardItem),
+        write: vi.fn(() => clipboardSettlement.promise),
+      },
+    });
+
+    await expect(operation.captured).resolves.toMatchObject({ tag: "ok" });
+    expect(encoder.encodeThumbnail).not.toHaveBeenCalled();
+    clipboardSettlement.resolve(undefined);
+    await expect(operation.clipboard).resolves.toMatchObject({ tag: "ok" });
+    await expect(operation.thumbnail).resolves.toMatchObject({ tag: "ok" });
+    expect(encoder.encodeThumbnail).toHaveBeenCalledOnce();
   });
 
   it("falls back once to the live video frame without changing the preference", async () => {
@@ -285,6 +307,43 @@ describe("capture operation", () => {
     );
   });
 
+  it("records Worker acquisition, handoff, raster, and PNG durations without delaying Clipboard start", async () => {
+    const measurements: CaptureTimingMeasurement[] = [];
+    const imageProcessing = fakeImageProcessing();
+    imageProcessing.processVideoFrame.mockResolvedValue({
+      blob: imageBlob("worker-png", "image/png"),
+      width: 3000,
+      height: 4000,
+      durations: {
+        videoFrameAcquire: 250,
+        videoFrameTransfer: some(2),
+        videoFrameRaster: 62,
+        videoFramePngEncode: 558,
+      },
+    });
+    const clipboard = successfulClipboard();
+
+    const operation = beginCaptureAndCopy(video, {
+      encoder: fakeEncoder(),
+      imageProcessing,
+      clipboardPort: clipboard,
+      preference: "videoFrame",
+      observeTiming: (measurement) => measurements.push(measurement),
+    });
+
+    expect(clipboard.createItem).toHaveBeenCalledOnce();
+    expect(clipboard.write).toHaveBeenCalledOnce();
+    await operation.captured;
+    expect(measurements).toEqual(
+      expect.arrayContaining([
+        { kind: "duration", stage: "videoFrameAcquire", durationMs: some(250) },
+        { kind: "duration", stage: "videoFrameTransfer", durationMs: some(2) },
+        { kind: "duration", stage: "videoFrameRaster", durationMs: some(62) },
+        { kind: "duration", stage: "videoFramePngEncode", durationMs: some(558) },
+      ]),
+    );
+  });
+
   it("keeps stage durations distinct from shutter-relative Clipboard milestones", async () => {
     const photo = imageBlob("photo", "image/jpeg");
     const measurements: CaptureTimingMeasurement[] = [];
@@ -300,6 +359,7 @@ describe("capture operation", () => {
           dispose: vi.fn(),
         }),
       ),
+      processVideoFrame: (_video, fallback) => fallback(),
       dispose: vi.fn(),
     };
     const operation = beginCaptureAndCopy(video, {
@@ -348,7 +408,10 @@ type FakeEncoder = CaptureEncoder &
   }>;
 
 type FakeImageProcessing = ImageProcessingPort &
-  Readonly<{ prepare: ReturnType<typeof vi.fn<ImageProcessingPort["prepare"]>> }>;
+  Readonly<{
+    prepare: ReturnType<typeof vi.fn<ImageProcessingPort["prepare"]>>;
+    processVideoFrame: ReturnType<typeof vi.fn<ImageProcessingPort["processVideoFrame"]>>;
+  }>;
 
 function fakeEncoder(
   options: {
@@ -366,10 +429,13 @@ function fakeEncoder(
         Promise.resolve({ blob: imageBlob("png", "image/png"), width: 640, height: 480 }));
       return {
         ...frame,
-        durations: options.videoDurations ?? {
-          videoFrameAcquire: 1,
-          videoFrameRaster: 2,
-          videoFramePngEncode: 3,
+        durations: {
+          videoFrameTransfer: none,
+          ...(options.videoDurations ?? {
+            videoFrameAcquire: 1,
+            videoFrameRaster: 2,
+            videoFramePngEncode: 3,
+          }),
         },
       };
     }),
@@ -403,6 +469,7 @@ function fakeImageProcessing(
         ? Promise.resolve(prepared)
         : Promise.reject(options.prepareError),
     ),
+    processVideoFrame: vi.fn((_video, fallback) => fallback()),
     dispose: vi.fn(),
   };
 }

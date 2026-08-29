@@ -210,7 +210,7 @@ test("disables the photo option and uses video frame when unsupported", async ({
     });
   });
   await installClipboardMock(page);
-  await page.goto("./");
+  await page.goto("./?videoFramePipeline=canvas");
   await page.getByRole("button", { name: "カメラを開始" }).click();
 
   const preference = page.getByRole("combobox", { name: "撮影方式" });
@@ -227,6 +227,7 @@ test("disables the photo option and uses video frame when unsupported", async ({
   await page.getByRole("button", { name: "履歴を開く（1件）" }).click();
   await page.getByRole("button", { name: /に撮影した画像/ }).click();
   await expect(page.getByText("動画フレーム", { exact: true }).last()).toBeVisible();
+  await expect(page.getByText("main-thread Canvas", { exact: true })).toBeVisible();
   await page.getByText("端末内の処理時間", { exact: true }).click();
   await expect(page.getByText("動画フレーム取得", { exact: true })).toBeVisible();
   await expect(page.getByText("動画フレームWorker handoff", { exact: true })).toBeVisible();
