@@ -1,4 +1,5 @@
 import type { CameraError, ClipboardError } from "./errors";
+import type { SuspensionReason } from "./idle";
 import type { Option } from "./result";
 
 declare const cameraIdBrand: unique symbol;
@@ -92,7 +93,11 @@ export type CameraState =
   | Readonly<{ tag: "requesting" }>
   | Readonly<{ tag: "streaming"; current: Option<CameraId> }>
   | Readonly<{ tag: "switching"; current: Option<CameraId>; target: CameraId }>
-  | Readonly<{ tag: "suspended"; current: Option<CameraId> }>
+  | Readonly<{
+      tag: "suspended";
+      current: Option<CameraId>;
+      reason: SuspensionReason;
+    }>
   | Readonly<{ tag: "blocked"; error: CameraError }>;
 
 export type CopyState =

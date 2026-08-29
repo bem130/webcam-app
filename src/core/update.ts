@@ -1,4 +1,5 @@
 import type { CameraError, ClipboardError } from "./errors";
+import type { SuspensionReason } from "./idle";
 import { addCapture, addCaptureThumbnail, removeCapture, shouldWarnAboutMemory } from "./history";
 import type {
   AppModel,
@@ -30,8 +31,11 @@ export type AppAction =
       cameras: readonly CameraDescriptor[];
       videoSettings: Option<CameraVideoSettings>;
     }>
-  | Readonly<{ type: "cameraSuspended" }>
-  | Readonly<{ type: "cameraResumed" }>
+  | Readonly<{
+      type: "cameraSuspended";
+      current: Option<CameraId>;
+      reason: SuspensionReason;
+    }>
   | Readonly<{ type: "devicesUpdated"; cameras: readonly CameraDescriptor[] }>
   | Readonly<{ type: "photoCapabilityUpdated"; capability: PhotoCapabilityState }>
   | Readonly<{ type: "capturePreferenceChanged"; preference: CapturePreference }>
@@ -90,13 +94,12 @@ export function update(model: AppModel, action: AppAction): AppModel {
         photoCapability: { tag: "checking" },
       };
     case "cameraSuspended":
-      return model.camera.tag === "streaming"
-        ? { ...model, camera: { tag: "suspended", current: model.camera.current } }
-        : model;
-    case "cameraResumed":
-      return model.camera.tag === "suspended"
-        ? { ...model, camera: { tag: "streaming", current: model.camera.current } }
-        : model;
+      return {
+        ...model,
+        camera: { tag: "suspended", current: action.current, reason: action.reason },
+        videoSettings: none,
+        photoCapability: { tag: "checking" },
+      };
     case "devicesUpdated":
       return { ...model, cameras: action.cameras };
     case "photoCapabilityUpdated":

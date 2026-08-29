@@ -311,20 +311,26 @@
 }
 
 .welcome,
-.error-card {
+.error-card,
+.suspended-card {
   width: min(calc(100% - 32px), 520px);
   padding: clamp(24px, 6vw, 42px);
   border-radius: var(--sheet-radius);
   text-align: center;
 }
+.suspended-card {
+  position: relative;
+}
 .welcome h1,
-.error-card h1 {
+.error-card h1,
+.suspended-card h1 {
   margin: 4px 0 18px;
   font-size: clamp(2rem, 8vw, 3.2rem);
   letter-spacing: -0.045em;
 }
 .welcome > p,
-.error-card > p {
+.error-card > p,
+.suspended-card > p {
   line-height: 1.55;
 }
 .eyebrow {
@@ -372,7 +378,8 @@
   background: var(--danger);
 }
 .welcome .primary-button,
-.error-card .primary-button {
+.error-card .primary-button,
+.suspended-card .primary-button {
   margin-top: 10px;
 }
 

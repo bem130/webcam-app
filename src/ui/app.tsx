@@ -3,14 +3,17 @@ import {
   attachCameraStream,
   clearSwitchPlaceholder,
   drawSwitchPlaceholder,
+  hardStopCameraStream,
 } from "../application/camera-session";
 import {
   observeCaptureOperation,
   type CaptureLifecycleEvent,
 } from "../application/capture-controller";
+import { createIdleController } from "../application/idle-controller";
 import { chooseQuickSwapTarget } from "../core/camera-selection";
 import type { CameraError } from "../core/errors";
 import { historyByteLength, MEMORY_WARNING_BYTES } from "../core/history";
+import type { SuspensionReason } from "../core/idle";
 import {
   captureId,
   emptyCaptureDiagnostics,
@@ -28,9 +31,9 @@ import {
   mapCameraError,
   requestInitialCamera,
   requestSpecificCamera,
-  setStreamEnabled,
   stopStream,
 } from "../platform/camera";
+import { bindUserActivity } from "../platform/activity";
 import { beginCaptureAndCopy, beginCapturedImageCopy } from "../platform/capture";
 import { PNG_MIME } from "../platform/clipboard";
 import { browserImageProcessingPort } from "../platform/image-processing";
@@ -44,6 +47,7 @@ import { ErrorView } from "./error-view";
 import { HistoryPanel } from "./history-panel";
 import { cameraErrorMessage, captureErrorMessage, clipboardErrorMessage } from "./messages.ja";
 import { PermissionView } from "./permission-view";
+import { SuspendedView } from "./suspended-view";
 
 type Feedback = Readonly<{ tone: "neutral" | "success" | "error" | "warning"; text: string }>;
 const TRANSIENT_FEEDBACK_DURATION_MS = 3_000;
@@ -67,6 +71,10 @@ export function App() {
   const nativePhotoRef = useRef<Option<NativePhotoCapture>>(none);
   const ignoredDiagnosticsRef = useRef(new Set<CaptureId>());
   const switchTransactionRef = useRef(0);
+  const cameraRequestInFlightRef = useRef(false);
+  const cameraRequestTargetRef = useRef<Option<CameraId>>(none);
+  const modelRef = useRef(model);
+  modelRef.current = model;
   const thumbnailUrls = useMemo(() => new ObjectUrlRegistry(), []);
   const detailUrls = useMemo(() => new ObjectUrlRegistry(), []);
   const imageProcessing = useMemo(
@@ -85,6 +93,42 @@ export function App() {
     }, TRANSIENT_FEEDBACK_DURATION_MS);
     return () => window.clearTimeout(handle);
   }, [feedback]);
+
+  const hardSuspendCamera = useCallback((reason: SuspensionReason) => {
+    const camera = modelRef.current.camera;
+    if (
+      streamRef.current === null &&
+      camera.tag !== "streaming" &&
+      camera.tag !== "switching" &&
+      camera.tag !== "requesting"
+    ) {
+      return;
+    }
+    const stream = streamRef.current;
+    const streamCamera = hardStopCameraStream(videoRef.current, stream);
+    const retainedCamera =
+      streamCamera.tag === "some"
+        ? streamCamera
+        : camera.tag === "streaming" || camera.tag === "switching"
+          ? camera.current
+          : camera.tag === "requesting"
+            ? cameraRequestTargetRef.current
+            : none;
+    switchTransactionRef.current += 1;
+    streamRef.current = null;
+    nativePhotoRef.current = none;
+    clearSwitchPlaceholder(placeholderRef.current);
+    setCameraMenuOpen(false);
+    dispatch({ type: "cameraSuspended", current: retainedCamera, reason });
+  }, []);
+
+  const idleController = useMemo(
+    () =>
+      createIdleController({
+        onSuspend: () => hardSuspendCamera("idle"),
+      }),
+    [hardSuspendCamera],
+  );
 
   const discoverPhotoCapabilities = useCallback((stream: MediaStream) => {
     nativePhotoRef.current = none;
@@ -114,58 +158,116 @@ export function App() {
       ? (model.cameras.find((camera) => camera.id === currentId.value) ?? null)
       : null;
 
-  const attachStream = useCallback(async (stream: MediaStream) => {
-    const video = videoRef.current;
-    if (video === null) throw new Error("video-unavailable");
-    streamRef.current = stream;
-    return attachCameraStream(video, stream, () => {
-      if (streamRef.current === stream) {
-        streamRef.current = null;
-        nativePhotoRef.current = none;
-        dispatch({ type: "cameraFailed", error: { tag: "streamEnded" } });
-      }
-    });
-  }, []);
+  const attachStream = useCallback(
+    async (stream: MediaStream) => {
+      const video = videoRef.current;
+      if (video === null) throw new Error("video-unavailable");
+      streamRef.current = stream;
+      return attachCameraStream(video, stream, () => {
+        if (streamRef.current === stream) {
+          streamRef.current = null;
+          nativePhotoRef.current = none;
+          idleController.cameraStopped();
+          dispatch({ type: "cameraFailed", error: { tag: "streamEnded" } });
+        }
+      });
+    },
+    [idleController],
+  );
 
   const startCamera = useCallback(async () => {
-    if (capabilityMessage !== null) return;
-    switchTransactionRef.current += 1;
-    const transaction = switchTransactionRef.current;
-    stopStream(streamRef.current);
-    streamRef.current = null;
-    nativePhotoRef.current = none;
-    dispatch({ type: "cameraRequestStarted" });
-    setFeedback(null);
-    const result = await requestInitialCamera();
-    if (transaction !== switchTransactionRef.current) {
-      if (result.tag === "ok") stopStream(result.value);
-      return;
-    }
-    if (result.tag === "err") {
-      dispatch({ type: "cameraFailed", error: result.error });
-      return;
-    }
+    if (capabilityMessage !== null || cameraRequestInFlightRef.current) return;
+    cameraRequestInFlightRef.current = true;
+    cameraRequestTargetRef.current = none;
     try {
-      const videoSettings = await attachStream(result.value);
-      const cameras = await enumerateCameras();
-      dispatch({
-        type: "cameraStarted",
-        current: currentCameraId(result.value),
-        cameras,
-        videoSettings,
-      });
-      discoverPhotoCapabilities(result.value);
-    } catch (cause) {
-      stopStream(result.value);
+      idleController.cameraStopped();
+      switchTransactionRef.current += 1;
+      const transaction = switchTransactionRef.current;
+      stopStream(streamRef.current);
       streamRef.current = null;
       nativePhotoRef.current = none;
-      dispatch({ type: "cameraFailed", error: mapCameraError(cause) });
+      dispatch({ type: "cameraRequestStarted" });
+      setFeedback(null);
+      const result = await requestInitialCamera();
+      if (transaction !== switchTransactionRef.current) {
+        if (result.tag === "ok") stopStream(result.value);
+        return;
+      }
+      if (result.tag === "err") {
+        dispatch({ type: "cameraFailed", error: result.error });
+        return;
+      }
+      try {
+        const videoSettings = await attachStream(result.value);
+        const cameras = await enumerateCameras();
+        dispatch({
+          type: "cameraStarted",
+          current: currentCameraId(result.value),
+          cameras,
+          videoSettings,
+        });
+        discoverPhotoCapabilities(result.value);
+        idleController.cameraStreaming();
+      } catch (cause) {
+        stopStream(result.value);
+        streamRef.current = null;
+        nativePhotoRef.current = none;
+        dispatch({ type: "cameraFailed", error: mapCameraError(cause) });
+      }
+    } finally {
+      cameraRequestInFlightRef.current = false;
+      cameraRequestTargetRef.current = none;
     }
-  }, [attachStream, capabilityMessage, discoverPhotoCapabilities]);
+  }, [attachStream, capabilityMessage, discoverPhotoCapabilities, idleController]);
+
+  const resumeCamera = useCallback(async () => {
+    if (model.camera.tag !== "suspended" || cameraRequestInFlightRef.current) return;
+    cameraRequestInFlightRef.current = true;
+    const retainedCamera = model.camera.current;
+    cameraRequestTargetRef.current = retainedCamera;
+    try {
+      switchTransactionRef.current += 1;
+      const transaction = switchTransactionRef.current;
+      dispatch({ type: "cameraRequestStarted" });
+      setFeedback(null);
+      const result =
+        retainedCamera.tag === "some"
+          ? await requestSpecificCamera(retainedCamera.value)
+          : await requestInitialCamera();
+      if (transaction !== switchTransactionRef.current) {
+        if (result.tag === "ok") stopStream(result.value);
+        return;
+      }
+      if (result.tag === "err") {
+        dispatch({ type: "cameraFailed", error: result.error });
+        return;
+      }
+      try {
+        const videoSettings = await attachStream(result.value);
+        const cameras = await enumerateCameras();
+        dispatch({
+          type: "cameraStarted",
+          current: currentCameraId(result.value),
+          cameras,
+          videoSettings,
+        });
+        discoverPhotoCapabilities(result.value);
+        idleController.cameraStreaming();
+      } catch (cause) {
+        stopStream(result.value);
+        streamRef.current = null;
+        nativePhotoRef.current = none;
+        dispatch({ type: "cameraFailed", error: mapCameraError(cause) });
+      }
+    } finally {
+      cameraRequestInFlightRef.current = false;
+      cameraRequestTargetRef.current = none;
+    }
+  }, [attachStream, discoverPhotoCapabilities, idleController, model.camera]);
 
   const switchCamera = useCallback(
     async (target: CameraId) => {
-      if (model.camera.tag !== "streaming") return;
+      if (model.camera.tag !== "streaming" || captureBusy) return;
       const oldId = model.camera.current;
       if (oldId.tag === "some" && target === oldId.value) {
         setCameraMenuOpen(false);
@@ -174,6 +276,7 @@ export function App() {
       drawSwitchPlaceholder(videoRef.current, placeholderRef.current);
       dispatch({ type: "cameraSwitchStarted", target });
       setCameraMenuOpen(false);
+      idleController.cameraStopped();
       switchTransactionRef.current += 1;
       const transaction = switchTransactionRef.current;
       const oldStream = streamRef.current;
@@ -199,6 +302,7 @@ export function App() {
             videoSettings,
           });
           discoverPhotoCapabilities(requested.value);
+          idleController.cameraStreaming();
           return;
         } catch {
           stopStream(requested.value);
@@ -220,6 +324,7 @@ export function App() {
             clearSwitchPlaceholder(placeholderRef.current);
             dispatch({ type: "cameraStarted", current: oldId, cameras, videoSettings });
             discoverPhotoCapabilities(restored.value);
+            idleController.cameraStreaming();
             setFeedback({
               tone: "error",
               text: "選択したカメラへ切り替えられなかったため、元のカメラへ戻しました。",
@@ -237,7 +342,7 @@ export function App() {
       clearSwitchPlaceholder(placeholderRef.current);
       dispatch({ type: "cameraFailed", error });
     },
-    [attachStream, discoverPhotoCapabilities, model.camera],
+    [attachStream, captureBusy, discoverPhotoCapabilities, idleController, model.camera],
   );
 
   const capture = useCallback(() => {
@@ -248,9 +353,11 @@ export function App() {
     ignoredDiagnosticsRef.current.delete(id);
     const capturedAtEpochMs = Date.now();
     setCaptureBusy(true);
+    setCameraMenuOpen(false);
     setFlash(true);
     window.setTimeout(() => setFlash(false), 75);
     dispatch({ type: "copyStarted", captureId: id });
+    idleController.inhibit();
     const capturePreference = model.capturePreference;
     const operation = beginCaptureAndCopy(video, {
       imageProcessing,
@@ -285,6 +392,9 @@ export function App() {
     });
     observeCaptureOperation(id, operation, (event: CaptureLifecycleEvent) => {
       switch (event.type) {
+        case "cameraSourceSettled":
+          idleController.release();
+          break;
         case "captureSucceeded": {
           setCaptureDiagnostics((current) => {
             const next = new Map(current);
@@ -354,7 +464,7 @@ export function App() {
           break;
       }
     });
-  }, [captureBusy, imageProcessing, model.camera, model.capturePreference]);
+  }, [captureBusy, idleController, imageProcessing, model.camera, model.capturePreference]);
 
   const recopy = useCallback(
     (entry: CaptureEntry) => {
@@ -404,33 +514,24 @@ export function App() {
     () =>
       bindDocumentLifecycle({
         onHidden: () => {
-          setStreamEnabled(streamRef.current, false);
-          dispatch({ type: "cameraSuspended" });
+          idleController.cameraStopped();
+          hardSuspendCamera("background");
         },
-        onVisible: () => {
-          const stream = streamRef.current;
-          const live =
-            stream?.getVideoTracks().some((track) => track.readyState === "live") ?? false;
-          if (live) {
-            setStreamEnabled(stream, true);
-            dispatch({ type: "cameraResumed" });
-          } else if (stream !== null) {
-            streamRef.current = null;
-            nativePhotoRef.current = none;
-            dispatch({ type: "cameraFailed", error: { tag: "streamEnded" } });
-          }
-        },
+        onVisible: () => undefined,
         onPageHide: () => {
+          idleController.cameraStopped();
           switchTransactionRef.current += 1;
-          stopStream(streamRef.current);
+          hardStopCameraStream(videoRef.current, streamRef.current);
           streamRef.current = null;
           nativePhotoRef.current = none;
           thumbnailUrls.revokeAll();
           detailUrls.revokeAll();
         },
       }),
-    [detailUrls, thumbnailUrls],
+    [detailUrls, hardSuspendCamera, idleController, thumbnailUrls],
   );
+
+  useEffect(() => bindUserActivity(() => idleController.activity()), [idleController]);
 
   useEffect(() => {
     const mediaDevices = navigator.mediaDevices;
@@ -444,24 +545,27 @@ export function App() {
           stopStream(streamRef.current);
           streamRef.current = null;
           nativePhotoRef.current = none;
+          idleController.cameraStopped();
           dispatch({ type: "cameraFailed", error: { tag: "streamEnded" } });
         }
       });
     };
     mediaDevices.addEventListener("devicechange", refresh);
     return () => mediaDevices.removeEventListener("devicechange", refresh);
-  }, []);
+  }, [idleController]);
 
   useEffect(
     () => () => {
       switchTransactionRef.current += 1;
-      stopStream(streamRef.current);
+      idleController.dispose();
+      hardStopCameraStream(videoRef.current, streamRef.current);
+      streamRef.current = null;
       nativePhotoRef.current = none;
       imageProcessing.dispose();
       thumbnailUrls.revokeAll();
       detailUrls.revokeAll();
     },
-    [detailUrls, imageProcessing, thumbnailUrls],
+    [detailUrls, idleController, imageProcessing, thumbnailUrls],
   );
 
   const latest = model.history[0];
@@ -491,7 +595,7 @@ export function App() {
           latestThumbnailUrl={latestThumbnailUrl}
           captureBusy={captureBusy}
           flash={flash}
-          inactive={model.camera.tag === "requesting"}
+          inactive={model.camera.tag === "requesting" || model.camera.tag === "suspended"}
           onToggleMenu={() => {
             if (!cameraMenuOpen) {
               void enumerateCameras().then((cameras) =>
@@ -529,6 +633,9 @@ export function App() {
           message={cameraErrorMessage(model.camera.error)}
           onRetry={() => void startCamera()}
         />
+      )}
+      {model.camera.tag === "suspended" && (
+        <SuspendedView reason={model.camera.reason} onResume={() => void resumeCamera()} />
       )}
 
       <AppOverlayPlane

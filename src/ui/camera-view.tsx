@@ -118,6 +118,7 @@ export function CameraView(props: CameraViewProps) {
             <select
               aria-label="撮影方式"
               value={photoCapability.tag === "supported" ? capturePreference : "videoFrame"}
+              disabled={captureBusy}
               onChange={(event) =>
                 onCapturePreferenceChange(
                   event.currentTarget.value === "photoPreferred" ? "photoPreferred" : "videoFrame",
@@ -140,6 +141,7 @@ export function CameraView(props: CameraViewProps) {
               type="button"
               aria-haspopup="menu"
               aria-expanded={menuOpen}
+              disabled={captureBusy}
               onClick={onToggleMenu}
             >
               <CameraIcon />
@@ -205,7 +207,7 @@ export function CameraView(props: CameraViewProps) {
               aria-label="別のカメラへすばやく切り替え"
               title="別のカメラへすばやく切り替え"
               onClick={onQuickSwap}
-              disabled={switching}
+              disabled={captureBusy || switching}
             >
               <SwapIcon />
             </button>

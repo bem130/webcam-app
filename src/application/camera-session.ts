@@ -1,6 +1,7 @@
-import type { CameraVideoSettings } from "../core/model";
+import type { CameraId, CameraVideoSettings } from "../core/model";
 import type { Option } from "../core/result";
-import { cameraVideoSettings } from "../platform/camera";
+import { none } from "../core/result";
+import { cameraVideoSettings, currentCameraId, stopStream } from "../platform/camera";
 
 export async function attachCameraStream(
   video: HTMLVideoElement,
@@ -12,6 +13,16 @@ export async function attachCameraStream(
   await video.play();
   await waitForVideoFrame(video);
   return cameraVideoSettings(stream);
+}
+
+export function hardStopCameraStream(
+  video: HTMLVideoElement | null,
+  stream: MediaStream | null,
+): Option<CameraId> {
+  const current = stream === null ? none : currentCameraId(stream);
+  stopStream(stream);
+  if (video !== null) video.srcObject = null;
+  return current;
 }
 
 export function drawSwitchPlaceholder(

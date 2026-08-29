@@ -28,9 +28,18 @@ describe("update", () => {
       videoSettings: some({ widthPx: 3840, heightPx: 2160, frameRate: some(30) }),
     });
     expect(streaming.camera.tag).toBe("streaming");
-    const suspended = update(streaming, { type: "cameraSuspended" });
-    expect(suspended.camera.tag).toBe("suspended");
-    expect(update(suspended, { type: "cameraResumed" }).camera.tag).toBe("streaming");
+    const suspended = update(streaming, {
+      type: "cameraSuspended",
+      current: some(cameraId("rear")),
+      reason: "idle",
+    });
+    expect(suspended.camera).toEqual({
+      tag: "suspended",
+      current: some(cameraId("rear")),
+      reason: "idle",
+    });
+    expect(suspended.videoSettings).toEqual(none);
+    expect(update(suspended, { type: "cameraRequestStarted" }).camera.tag).toBe("requesting");
     expect(
       update(streaming, { type: "cameraFailed", error: { tag: "streamEnded" } }).camera.tag,
     ).toBe("blocked");

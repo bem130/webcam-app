@@ -77,6 +77,18 @@ describe("architecture dependency contract", () => {
     expect(topbarBackToFront.every((index) => index >= 0)).toBe(true);
     expect(topbarBackToFront).toEqual([...topbarBackToFront].sort((left, right) => left - right));
   });
+
+  it("places the suspension view above the camera and below transient app overlays by render order", () => {
+    const app = readFileSync("src/ui/app.tsx", "utf8");
+    const styles = readFileSync("src/styles/app.css", "utf8");
+    const backToFront = ["<CameraView", "<SuspendedView", "<AppOverlayPlane"].map((token) =>
+      app.indexOf(token),
+    );
+
+    expect(backToFront.every((index) => index >= 0)).toBe(true);
+    expect(backToFront).toEqual([...backToFront].sort((left, right) => left - right));
+    expect(styles).toMatch(/\.suspended-card\s*{[^}]*position:\s*relative;/s);
+  });
 });
 
 function dependencyViolation(importer: string, specifier: string): string | null {
