@@ -238,7 +238,10 @@ function formatBytes(bytes: number): string {
 
 const DURATION_ROWS = [
   ["sourceAcquisition", "写真取得"],
-  ["videoFrameEncode", "動画フレームPNG"],
+  ["videoFrameAcquire", "動画フレーム取得"],
+  ["videoFrameTransfer", "動画フレームWorker handoff"],
+  ["videoFrameRaster", "動画フレームraster準備"],
+  ["videoFramePngEncode", "動画フレームPNG encode"],
   ["imageDecode", "画像decode / raster準備"],
   ["clipboardEncode", "Clipboard用PNG変換"],
   ["thumbnail", "サムネイル"],

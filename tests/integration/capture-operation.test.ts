@@ -237,7 +237,7 @@ describe("capture operation", () => {
       clock: steppedClock(),
       observeTiming: (measurement) => {
         stages.push(measurement.kind === "duration" ? measurement.stage : measurement.milestone);
-        if (measurement.kind === "duration" && measurement.stage === "videoFrameEncode") {
+        if (measurement.kind === "duration" && measurement.stage === "videoFramePngEncode") {
           throw new Error("debug UI failed");
         }
       },
@@ -246,7 +246,10 @@ describe("capture operation", () => {
     await Promise.all([operation.captured, operation.thumbnail, operation.clipboard]);
     expect(stages).toEqual(
       expect.arrayContaining([
-        "videoFrameEncode",
+        "videoFrameAcquire",
+        "videoFrameTransfer",
+        "videoFrameRaster",
+        "videoFramePngEncode",
         "clipboardEncode",
         "clipboardRepresentationReady",
         "thumbnail",
@@ -254,6 +257,32 @@ describe("capture operation", () => {
       ]),
     );
     await expect(operation.captured).resolves.toMatchObject({ tag: "ok" });
+  });
+
+  it("records baseline video-frame acquire, raster, and PNG durations separately", async () => {
+    const measurements: CaptureTimingMeasurement[] = [];
+    const operation = beginCaptureAndCopy(video, {
+      encoder: fakeEncoder({
+        videoDurations: {
+          videoFrameAcquire: 11,
+          videoFrameRaster: 22,
+          videoFramePngEncode: 33,
+        },
+      }),
+      clipboardPort: successfulClipboard(),
+      preference: "videoFrame",
+      observeTiming: (measurement) => measurements.push(measurement),
+    });
+
+    await operation.captured;
+    expect(measurements).toEqual(
+      expect.arrayContaining([
+        { kind: "duration", stage: "videoFrameAcquire", durationMs: some(11) },
+        { kind: "duration", stage: "videoFrameTransfer", durationMs: { tag: "none" } },
+        { kind: "duration", stage: "videoFrameRaster", durationMs: some(22) },
+        { kind: "duration", stage: "videoFramePngEncode", durationMs: some(33) },
+      ]),
+    );
   });
 
   it("keeps stage durations distinct from shutter-relative Clipboard milestones", async () => {
@@ -323,15 +352,27 @@ type FakeImageProcessing = ImageProcessingPort &
 
 function fakeEncoder(
   options: {
-    video?: ReturnType<CaptureEncoder["encodeVideoFramePng"]>;
+    video?: Promise<Readonly<{ blob: Blob; width: number; height: number }>>;
+    videoDurations?: Readonly<{
+      videoFrameAcquire: number;
+      videoFrameRaster: number;
+      videoFramePngEncode: number;
+    }>;
   } = {},
 ): FakeEncoder {
   return {
-    encodeVideoFramePng: vi.fn(
-      () =>
-        options.video ??
-        Promise.resolve({ blob: imageBlob("png", "image/png"), width: 640, height: 480 }),
-    ),
+    encodeVideoFramePng: vi.fn(async () => {
+      const frame = await (options.video ??
+        Promise.resolve({ blob: imageBlob("png", "image/png"), width: 640, height: 480 }));
+      return {
+        ...frame,
+        durations: options.videoDurations ?? {
+          videoFrameAcquire: 1,
+          videoFrameRaster: 2,
+          videoFramePngEncode: 3,
+        },
+      };
+    }),
     inspectImage: vi.fn(() => Promise.resolve({ width: 1, height: 1 })),
     encodeBlobPng: vi.fn(() => Promise.resolve(imageBlob("png", "image/png"))),
     encodeThumbnail: vi.fn(() => Promise.resolve(imageBlob("thumbnail", "image/jpeg"))),

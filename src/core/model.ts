@@ -37,7 +37,14 @@ export type CapturePreference = "photoPreferred" | "videoFrame";
 export type CaptureRoute = "photo" | "videoFrame";
 export type ImageMimeType = `image/${string}`;
 export type CaptureTimingDurationStage =
-  "sourceAcquisition" | "videoFrameEncode" | "imageDecode" | "clipboardEncode" | "thumbnail";
+  | "sourceAcquisition"
+  | "videoFrameAcquire"
+  | "videoFrameTransfer"
+  | "videoFrameRaster"
+  | "videoFramePngEncode"
+  | "imageDecode"
+  | "clipboardEncode"
+  | "thumbnail";
 export type CaptureTimingMilestone = "clipboardRepresentationReady" | "clipboardSettled";
 export type CaptureTimingMeasurement =
   | Readonly<{

@@ -33,6 +33,21 @@ describe("capture dimensions", () => {
     expect(frameCanvas.height).toBe(1);
   });
 
+  it("measures frame validation, raster, and PNG encoding as separate durations", async () => {
+    const encoder = new CanvasCaptureEncoder(
+      fakeCanvas((callback) => callback(new Blob(["png"]))),
+      fakeCanvas(),
+    );
+    let tick = 0;
+    const result = await encoder.encodeVideoFramePng(fakeVideo(3000, 4000), () => ++tick);
+
+    expect(result.durations).toEqual({
+      videoFrameAcquire: 1,
+      videoFrameRaster: 1,
+      videoFramePngEncode: 1,
+    });
+  });
+
   it("releases a full-resolution canvas after failed encoding", async () => {
     const frameCanvas = fakeCanvas((callback) => callback(null));
     const encoder = new CanvasCaptureEncoder(frameCanvas, fakeCanvas());

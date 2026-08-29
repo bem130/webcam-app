@@ -281,7 +281,10 @@ export function App() {
                     ...diagnostics,
                     durations: {
                       ...diagnostics.durations,
-                      videoFrameEncode: diagnostics.durations.videoFrameEncode ?? none,
+                      videoFrameAcquire: diagnostics.durations.videoFrameAcquire ?? none,
+                      videoFrameTransfer: diagnostics.durations.videoFrameTransfer ?? none,
+                      videoFrameRaster: diagnostics.durations.videoFrameRaster ?? none,
+                      videoFramePngEncode: diagnostics.durations.videoFramePngEncode ?? none,
                     },
                   }
                 : {
