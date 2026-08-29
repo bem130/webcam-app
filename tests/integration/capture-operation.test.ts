@@ -5,14 +5,79 @@ import {
   beginCaptureAndCopy,
   beginCapturedImageCopy,
   type CaptureEncoder,
+  type EncodedVideoFrame,
 } from "../../src/platform/capture";
 import type { ClipboardPort } from "../../src/platform/clipboard";
-import type { ImageProcessingPort, PreparedImage } from "../../src/platform/image-processing";
+import {
+  ImageProcessingFailure,
+  type ImageProcessingPort,
+  type PreparedImage,
+} from "../../src/platform/image-processing";
 import type { NativePhotoCapture } from "../../src/platform/native-photo";
 
 const video = { videoWidth: 640, videoHeight: 480 } as HTMLVideoElement;
 
 describe("capture operation", () => {
+  it("releases native camera-source inhibition after takePhoto, before decode and Clipboard", async () => {
+    const photo = deferred<Blob>();
+    const preparation = deferred<PreparedImage>();
+    const imageProcessing: ImageProcessingPort = {
+      prepare: vi.fn(() => preparation.promise),
+      processVideoFrame: (_video, fallback) => fallback(),
+      dispose: vi.fn(),
+    };
+    const operation = beginCaptureAndCopy(video, {
+      encoder: fakeEncoder(),
+      imageProcessing,
+      clipboardPort: clipboardAwaitingPayload(),
+      nativePhoto: some(fakeNativePhoto(() => photo.promise)),
+    });
+    let sourceSettled = false;
+    void operation.cameraSourceSettled.then(() => {
+      sourceSettled = true;
+    });
+
+    await flushMicrotasks();
+    expect(sourceSettled).toBe(false);
+    photo.resolve(imageBlob("photo", "image/jpeg"));
+    await flushMicrotasks();
+    expect(sourceSettled).toBe(true);
+    expect(imageProcessing.prepare).toHaveBeenCalledOnce();
+  });
+
+  it("keeps Worker video-frame camera-source inhibition until the PNG artifact settles", async () => {
+    const encoded = deferred<EncodedVideoFrame>();
+    const imageProcessing = fakeImageProcessing();
+    imageProcessing.processVideoFrame.mockReturnValue(encoded.promise);
+    const operation = beginCaptureAndCopy(video, {
+      encoder: fakeEncoder(),
+      imageProcessing,
+      clipboardPort: clipboardAwaitingPayload(),
+      preference: "videoFrame",
+    });
+    let sourceSettled = false;
+    void operation.cameraSourceSettled.then(() => {
+      sourceSettled = true;
+    });
+
+    await flushMicrotasks();
+    expect(sourceSettled).toBe(false);
+    encoded.resolve({
+      blob: imageBlob("png", "image/png"),
+      width: 640,
+      height: 480,
+      durations: {
+        videoFrameAcquire: 1,
+        videoFrameTransfer: some(2),
+        videoFrameRaster: 3,
+        videoFramePngEncode: 4,
+      },
+    });
+    await operation.cameraSourceSettled;
+    expect(sourceSettled).toBe(true);
+    expect(imageProcessing.processVideoFrame).toHaveBeenCalledOnce();
+  });
+
   it("keeps a successful video artifact separate from a failed Clipboard write", async () => {
     const png = imageBlob("png", "image/png");
     const thumbnail = imageBlob("thumbnail", "image/jpeg");
@@ -193,12 +258,11 @@ describe("capture operation", () => {
     expect(encoder.encodeVideoFramePng).toHaveBeenCalledOnce();
   });
 
-  it("falls back when the returned native image cannot be decoded", async () => {
-    const png = imageBlob("png", "image/png");
-    const encoder = fakeEncoder({
-      video: Promise.resolve({ blob: png, width: 640, height: 480 }),
+  it("does not capture a later video frame after native image processing fails", async () => {
+    const encoder = fakeEncoder();
+    const imageProcessing = fakeImageProcessing({
+      prepareError: new ImageProcessingFailure({ tag: "imageDecodeFailed" }),
     });
-    const imageProcessing = fakeImageProcessing({ prepareError: new Error("decode failed") });
     const operation = beginCaptureAndCopy(video, {
       encoder,
       imageProcessing,
@@ -207,11 +271,13 @@ describe("capture operation", () => {
       preference: "photoPreferred",
     });
 
-    await expect(operation.captured).resolves.toMatchObject({
-      tag: "ok",
-      value: { route: "videoFrame" },
+    await expect(operation.captured).resolves.toEqual({
+      tag: "err",
+      error: { tag: "imageDecodeFailed" },
     });
-    expect(encoder.encodeVideoFramePng).toHaveBeenCalledOnce();
+    await expect(operation.cameraSourceSettled).resolves.toBeUndefined();
+    expect(encoder.encodeVideoFramePng).not.toHaveBeenCalled();
+    expect(imageProcessing.processVideoFrame).not.toHaveBeenCalled();
   });
 
   it("does not capture a fallback frame from an ended native track", async () => {
@@ -520,4 +586,9 @@ function deferred<T>(): Readonly<{ promise: Promise<T>; resolve: (value: T) => v
     resolve = complete;
   });
   return { promise, resolve };
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
 }

@@ -8,6 +8,7 @@ import type { CapturedImage, CaptureOperation } from "../../src/platform/capture
 describe("capture controller", () => {
   it("publishes the capture artifact before thumbnail and Clipboard settlement", async () => {
     const captured = deferred<Result<CapturedImage, never>>();
+    const cameraSource = deferred<void>();
     const thumbnail = deferred<Result<Blob, never>>();
     const clipboard = deferred<Result<void, ClipboardError>>();
     const events: string[] = [];
@@ -16,12 +17,17 @@ describe("capture controller", () => {
     observeCaptureOperation(
       id,
       {
+        cameraSourceSettled: cameraSource.promise,
         captured: captured.promise,
         thumbnail: thumbnail.promise,
         clipboard: clipboard.promise,
       },
       (event) => events.push(event.type),
     );
+
+    cameraSource.resolve(undefined);
+    await flushMicrotasks();
+    expect(events).toEqual(["cameraSourceSettled"]);
 
     captured.resolve(
       ok({
@@ -33,15 +39,20 @@ describe("capture controller", () => {
       }),
     );
     await flushMicrotasks();
-    expect(events).toEqual(["captureSucceeded"]);
+    expect(events).toEqual(["cameraSourceSettled", "captureSucceeded"]);
 
     thumbnail.resolve(ok(new Blob(["thumbnail"])));
     await flushMicrotasks();
-    expect(events).toEqual(["captureSucceeded", "thumbnailSucceeded"]);
+    expect(events).toEqual(["cameraSourceSettled", "captureSucceeded", "thumbnailSucceeded"]);
 
     clipboard.resolve(err({ tag: "notAllowed" }));
     await flushMicrotasks();
-    expect(events).toEqual(["captureSucceeded", "thumbnailSucceeded", "clipboardFailed"]);
+    expect(events).toEqual([
+      "cameraSourceSettled",
+      "captureSucceeded",
+      "thumbnailSucceeded",
+      "clipboardFailed",
+    ]);
   });
 
   it("does not let a Clipboard result overwrite a later capture failure", async () => {
@@ -51,6 +62,7 @@ describe("capture controller", () => {
     observeCaptureOperation(
       captureId("failed"),
       {
+        cameraSourceSettled: new Promise(() => undefined),
         captured: captured.promise,
         thumbnail: new Promise(() => undefined),
         clipboard: Promise.resolve(ok(undefined)),
