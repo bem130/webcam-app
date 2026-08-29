@@ -21,7 +21,7 @@
 |   3.5 | Capture pipeline measurement and worker optimization            | 完了 (`a163a8d`) |
 |   3.6 | Video-frame measurement and Worker optimization                 | 完了 (`9706e83`) |
 |     4 | Idle timeout core + hard camera suspend                         | 完了 (`b228df4`) |
-|     5 | Screensaver + interaction-based resume                          | 未着手           |
+|     5 | Screensaver + interaction-based resume                          | 完了 (`316890f`) |
 |     6 | Preferences (idle timeout + capture mode)                       | 未着手           |
 |     7 | Acceptance automation + high-resolution memory hardening        | 未着手           |
 |     8 | Documentation + release hardening                               | 未着手           |
@@ -583,9 +583,9 @@ b228df4 feat: hard-stop idle and background cameras
 - resume失敗時に回復可能なerror UIを表示する。
 - focus、live region、reduced motion、320×568を含むviewportでoverlayが機能する。
 
-### Commit
+### 完了commit
 
-`feat: complete phase 5 idle screensaver`
+`316890f feat: complete phase 5 idle screensaver`
 
 ## 8. Phase 6: User preferences
 
