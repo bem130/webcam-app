@@ -1,7 +1,8 @@
 import type { Option } from "./result";
 import { none, some } from "./result";
 
-export type IdleTimeout = "10s" | "30s" | "1m" | "3m" | "5m" | "10m" | "off";
+export const IDLE_TIMEOUT_OPTIONS = ["10s", "30s", "1m", "3m", "5m", "10m", "off"] as const;
+export type IdleTimeout = (typeof IDLE_TIMEOUT_OPTIONS)[number];
 export type SuspensionReason = "idle" | "background";
 
 export type IdleState =

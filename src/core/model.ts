@@ -1,5 +1,6 @@
 import type { CameraError, ClipboardError } from "./errors";
 import type { SuspensionReason } from "./idle";
+import type { IdleTimeout } from "./idle";
 import type { Option } from "./result";
 
 declare const cameraIdBrand: unique symbol;
@@ -116,6 +117,7 @@ export type AppModel = Readonly<{
   videoSettings: Option<CameraVideoSettings>;
   photoCapability: PhotoCapabilityState;
   capturePreference: CapturePreference;
+  idleTimeout: IdleTimeout;
 }>;
 
 export const initialModel: AppModel = {
@@ -128,4 +130,14 @@ export const initialModel: AppModel = {
   videoSettings: { tag: "none" },
   photoCapability: { tag: "checking" },
   capturePreference: "photoPreferred",
+  idleTimeout: "10s",
 };
+
+export function initialModelWithPreferences(
+  preferences: Readonly<{
+    capturePreference: CapturePreference;
+    idleTimeout: IdleTimeout;
+  }>,
+): AppModel {
+  return { ...initialModel, ...preferences };
+}
