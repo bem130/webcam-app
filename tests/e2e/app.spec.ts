@@ -186,9 +186,11 @@ test("prefers native still capture and allows an explicit video-frame choice", a
   await page.goto("./");
   await page.getByRole("button", { name: "カメラを開始" }).click();
 
+  await openSettings(page);
   const preference = page.getByRole("combobox", { name: "撮影方式" });
   await expect(preference).toHaveValue("photoPreferred");
   await expect(page.getByText("撮影 最大", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "設定を閉じる" }).click();
   const shutter = page.getByRole("button", { name: "撮影してClipboardへコピー" });
   await shutter.click();
   await expect.poll(() => page.evaluate(() => window.__photoTakeCount)).toBe(1);
@@ -199,7 +201,9 @@ test("prefers native still capture and allows an explicit video-frame choice", a
   await expect(page.getByText("端末内の処理時間", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "履歴を閉じる" }).click();
+  await openSettings(page);
   await preference.selectOption("videoFrame");
+  await page.getByRole("button", { name: "設定を閉じる" }).click();
   await shutter.click();
   await expect(page.getByRole("button", { name: "履歴を開く（2件）" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__photoTakeCount)).toBe(1);
@@ -221,8 +225,16 @@ test("disables the photo option and uses video frame when unsupported", async ({
   });
   await installClipboardMock(page);
   await page.goto("./?videoFramePipeline=canvas");
+  const storedPhotoPreference =
+    '{"version":1,"idleTimeout":"10s","capturePreference":"photoPreferred"}';
+  await page.evaluate(([key, value]) => localStorage.setItem(key, value), [
+    "camera-clipboard.preferences",
+    storedPhotoPreference,
+  ] as const);
+  await page.reload();
   await page.getByRole("button", { name: "カメラを開始" }).click();
 
+  await openSettings(page);
   const preference = page.getByRole("combobox", { name: "撮影方式" });
   await expect(preference).toHaveValue("videoFrame");
   await expect
@@ -232,17 +244,75 @@ test("disables the photo option and uses video frame when unsupported", async ({
         .evaluate((option: HTMLOptionElement) => option.disabled),
     )
     .toBe(true);
-  await expect(page.getByText("このカメラでは写真APIを利用できません")).toBeVisible();
+  await expect(page.getByText(/このカメラでは動画フレームを使用します。/)).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem("camera-clipboard.preferences"))).toBe(
+    storedPhotoPreference,
+  );
+  await page.getByRole("button", { name: "設定を閉じる" }).click();
   await page.getByRole("button", { name: "撮影してClipboardへコピー" }).click();
   await page.getByRole("button", { name: "履歴を開く（1件）" }).click();
   await page.getByRole("button", { name: /に撮影した画像/ }).click();
-  await expect(page.getByText("動画フレーム", { exact: true }).last()).toBeVisible();
+  await expect(
+    page.locator(".capture-metadata dd").filter({ hasText: "動画フレーム" }).first(),
+  ).toBeVisible();
   await expect(page.getByText("main-thread Canvas", { exact: true })).toBeVisible();
   await page.getByText("端末内の処理時間", { exact: true }).click();
   await expect(page.getByText("動画フレーム取得", { exact: true })).toBeVisible();
   await expect(page.getByText("動画フレームWorker handoff", { exact: true })).toBeVisible();
   await expect(page.getByText("動画フレームraster準備", { exact: true })).toBeVisible();
   await expect(page.getByText("動画フレームPNG encode", { exact: true })).toBeVisible();
+});
+
+test("persists typed preferences and rearms or disables the idle timer", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== "chromium",
+    "The deterministic fake camera is configured for Chromium.",
+  );
+  await page.clock.install();
+  await installImageCaptureMock(page);
+  await page.goto("./");
+  await page.getByRole("button", { name: "カメラを開始" }).click();
+  await openSettings(page);
+
+  const idleTimeout = page.getByRole("combobox", { name: "カメラ自動停止" });
+  const capturePreference = page.getByRole("combobox", { name: "撮影方式" });
+  const settingsAccessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+    .analyze();
+  expect(settingsAccessibility.violations).toEqual([]);
+  await idleTimeout.selectOption("off");
+  await capturePreference.selectOption("videoFrame");
+  await page.getByRole("button", { name: "設定を閉じる" }).click();
+
+  const storedPreferences = await page.evaluate((): unknown => {
+    const serialized = localStorage.getItem("camera-clipboard.preferences");
+    return serialized === null ? undefined : (JSON.parse(serialized) as unknown);
+  });
+  expect(storedPreferences).toEqual({
+    version: 1,
+    idleTimeout: "off",
+    capturePreference: "videoFrame",
+  });
+  await page.clock.runFor(600_000);
+  expect(await page.evaluate(() => window.__cameraTrackStopCount)).toBe(0);
+
+  await page.reload();
+  await page.getByRole("button", { name: "カメラを開始" }).click();
+  await openSettings(page);
+  await expect(idleTimeout).toHaveValue("off");
+  await expect(capturePreference).toHaveValue("videoFrame");
+
+  await pauseClockSafely(page);
+  await idleTimeout.selectOption("10s");
+  await page.clock.runFor(9_999);
+  await expect(page.getByRole("heading", { name: "カメラを停止しました" })).toHaveCount(0);
+  await page.clock.runFor(1);
+  await expect(page.getByRole("dialog", { name: "設定" })).toBeHidden();
+  await expect(page.getByRole("heading", { name: "カメラを停止しました" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__cameraTrackStopCount)).toBe(1);
 });
 
 test("covers the idle camera with a resume-only screensaver", async ({ page, browserName }) => {
@@ -261,8 +331,7 @@ test("covers the idle camera with a resume-only screensaver", async ({ page, bro
   await expect(shutter).toBeVisible({ timeout: 10_000 });
   const shutterBox = await shutter.boundingBox();
   if (shutterBox === null) throw new Error("expected a visible shutter");
-  const now = await page.evaluate(() => Date.now());
-  await page.clock.pauseAt(now);
+  await pauseClockSafely(page);
   await page.evaluate(() => {
     document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
   });
@@ -388,6 +457,16 @@ function rectanglesOverlap(
     left.y + left.height <= right.y ||
     right.y + right.height <= left.y
   );
+}
+
+async function openSettings(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "設定を開く" }).click();
+  await expect(page.getByRole("dialog", { name: "設定" })).toBeVisible();
+}
+
+async function pauseClockSafely(page: Page): Promise<void> {
+  const current = await page.evaluate(() => Date.now());
+  await page.clock.pauseAt(current + 1_000);
 }
 
 async function installPlatformSpies(page: Page): Promise<void> {

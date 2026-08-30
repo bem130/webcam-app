@@ -17,7 +17,7 @@ import type { SuspensionReason } from "../core/idle";
 import {
   captureId,
   emptyCaptureDiagnostics,
-  initialModel,
+  initialModelWithPreferences,
   type CameraId,
   type CaptureDiagnostics,
   type CaptureEntry,
@@ -39,6 +39,7 @@ import { PNG_MIME } from "../platform/clipboard";
 import { browserImageProcessingPort } from "../platform/image-processing";
 import { bindDocumentLifecycle } from "../platform/lifecycle";
 import { ObjectUrlRegistry } from "../platform/object-url-registry";
+import { browserPreferencesPort } from "../platform/preferences";
 import { AppOverlayPlane } from "./app-overlay-plane";
 import { discoverNativePhotoCapture, type NativePhotoCapture } from "../platform/native-photo";
 import { CameraView } from "./camera-view";
@@ -48,17 +49,24 @@ import { HistoryPanel } from "./history-panel";
 import { cameraErrorMessage, captureErrorMessage, clipboardErrorMessage } from "./messages.ja";
 import { PermissionView } from "./permission-view";
 import { Screensaver } from "./screensaver";
+import { SettingsDialog } from "./settings-dialog";
 import { SuspendedView } from "./suspended-view";
 
 type Feedback = Readonly<{ tone: "neutral" | "success" | "error" | "warning"; text: string }>;
 const TRANSIENT_FEEDBACK_DURATION_MS = 3_000;
 
 export function App() {
-  const [model, dispatch] = useReducer(update, initialModel);
+  const preferences = useMemo(() => browserPreferencesPort(), []);
+  const initialAppModel = useMemo(
+    () => initialModelWithPreferences(preferences.load()),
+    [preferences],
+  );
+  const [model, dispatch] = useReducer(update, initialAppModel);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [selectedCapture, setSelectedCapture] = useState<CaptureId | null>(null);
   const [cameraMenuOpen, setCameraMenuOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [captureBusy, setCaptureBusy] = useState(false);
   const [flash, setFlash] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -134,15 +142,47 @@ export function App() {
     nativePhotoRef.current = none;
     clearSwitchPlaceholder(placeholderRef.current);
     setCameraMenuOpen(false);
+    setHistoryOpen(false);
+    setSelectedCapture(null);
+    setConfirmClear(false);
+    setSettingsOpen(false);
     dispatch({ type: "cameraSuspended", current: retainedCamera, reason });
   }, []);
 
   const idleController = useMemo(
     () =>
       createIdleController({
+        timeout: initialAppModel.idleTimeout,
         onSuspend: () => hardSuspendCamera("idle"),
       }),
-    [hardSuspendCamera],
+    [hardSuspendCamera, initialAppModel.idleTimeout],
+  );
+
+  const changeCapturePreference = useCallback(
+    (capturePreference: CaptureEntry["preference"]) => {
+      const current = modelRef.current;
+      dispatch({ type: "capturePreferenceChanged", preference: capturePreference });
+      preferences.save({
+        version: 1,
+        idleTimeout: current.idleTimeout,
+        capturePreference,
+      });
+    },
+    [preferences],
+  );
+
+  const changeIdleTimeout = useCallback(
+    (idleTimeout: (typeof model)["idleTimeout"]) => {
+      const current = modelRef.current;
+      idleController.setTimeout(idleTimeout);
+      dispatch({ type: "idleTimeoutChanged", timeout: idleTimeout });
+      preferences.save({
+        version: 1,
+        idleTimeout,
+        capturePreference: current.capturePreference,
+      });
+    },
+    [idleController, preferences],
   );
 
   const discoverPhotoCapabilities = useCallback((stream: MediaStream) => {
@@ -614,7 +654,6 @@ export function App() {
           currentCamera={currentCamera}
           videoSettings={model.videoSettings.tag === "some" ? model.videoSettings.value : null}
           photoCapability={model.photoCapability}
-          capturePreference={model.capturePreference}
           menuOpen={cameraMenuOpen}
           historyCount={model.history.length}
           latestThumbnailUrl={latestThumbnailUrl}
@@ -632,9 +671,7 @@ export function App() {
           onCloseMenu={() => setCameraMenuOpen(false)}
           onSelectCamera={(id) => void switchCamera(id)}
           onCapture={capture}
-          onCapturePreferenceChange={(preference) =>
-            dispatch({ type: "capturePreferenceChanged", preference })
-          }
+          onOpenSettings={() => setSettingsOpen(true)}
           onQuickSwap={() => {
             const target = chooseQuickSwapTarget(model.cameras, currentId, model.previousCamera);
             if (target.tag === "some") void switchCamera(target.value);
@@ -730,6 +767,16 @@ export function App() {
         open={confirmClear}
         onCancel={() => setConfirmClear(false)}
         onConfirm={clearHistory}
+      />
+      <SettingsDialog
+        open={settingsOpen}
+        idleTimeout={model.idleTimeout}
+        capturePreference={model.capturePreference}
+        photoCapability={model.photoCapability}
+        captureBusy={captureBusy}
+        onClose={() => setSettingsOpen(false)}
+        onIdleTimeoutChange={changeIdleTimeout}
+        onCapturePreferenceChange={changeCapturePreference}
       />
     </main>
   );
