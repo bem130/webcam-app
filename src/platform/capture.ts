@@ -18,6 +18,7 @@ import {
   type ImageProcessingPort,
 } from "./image-processing";
 import type { NativePhotoCapture } from "./native-photo";
+import { releaseCanvasBackingStore } from "./canvas-memory";
 
 export type Dimensions = Readonly<{ width: number; height: number }>;
 export type VideoFrameEncodeDurations = Readonly<{
@@ -104,9 +105,9 @@ export class CanvasCaptureEncoder implements CaptureEncoder {
     if (dimensions.width === 0 || dimensions.height === 0) {
       throw taggedCaptureError({ tag: "frameNotReady" });
     }
-    this.#frameCanvas.width = dimensions.width;
-    this.#frameCanvas.height = dimensions.height;
     try {
+      this.#frameCanvas.width = dimensions.width;
+      this.#frameCanvas.height = dimensions.height;
       const rasterStartedAt = clock();
       const context = this.#frameCanvas.getContext("2d");
       if (context === null) throw taggedCaptureError({ tag: "canvasUnavailable" });
@@ -131,7 +132,7 @@ export class CanvasCaptureEncoder implements CaptureEncoder {
       if (isTaggedCaptureError(cause)) throw cause;
       throw taggedCaptureError(mapEncodeFailure(cause));
     } finally {
-      releaseCanvas(this.#frameCanvas);
+      releaseCanvasBackingStore(this.#frameCanvas);
     }
   }
 
@@ -173,7 +174,7 @@ export class CanvasCaptureEncoder implements CaptureEncoder {
       throw taggedCaptureError(mapEncodeFailure(cause));
     } finally {
       bitmap?.close();
-      releaseCanvas(this.#frameCanvas);
+      releaseCanvasBackingStore(this.#frameCanvas);
     }
   }
 
@@ -205,7 +206,7 @@ export class CanvasCaptureEncoder implements CaptureEncoder {
       throw taggedCaptureError(mapEncodeFailure(cause));
     } finally {
       bitmap?.close();
-      releaseCanvas(this.#thumbnailCanvas);
+      releaseCanvasBackingStore(this.#thumbnailCanvas);
     }
   }
 }
@@ -444,11 +445,6 @@ function imageMimeType(blob: Blob): ImageMimeType {
     throw taggedCaptureError({ tag: "invalidImage" });
   }
   return type as ImageMimeType;
-}
-
-function releaseCanvas(canvas: HTMLCanvasElement): void {
-  canvas.width = 1;
-  canvas.height = 1;
 }
 
 function canvasToBlob(

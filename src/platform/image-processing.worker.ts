@@ -1,4 +1,5 @@
 import type { CaptureError } from "../core/errors";
+import { releaseCanvasBackingStore } from "./canvas-memory";
 import type { ImageProcessingRequest, ImageProcessingResponse } from "./image-processing-protocol";
 import { encodeWorkerVideoFrame, VideoFrameWorkerFailure } from "./video-frame-worker";
 
@@ -110,13 +111,13 @@ async function prepare(request: Extract<ImageProcessingRequest, { type: "prepare
           error: mapWorkerFailure(cause, { tag: "pngEncodingFailed" }),
         });
       } finally {
-        releaseCanvas(fullCanvas);
+        releaseCanvasBackingStore(fullCanvas);
       }
     }
   } catch (cause) {
     bitmap?.close();
-    releaseCanvas(fullCanvas);
-    releaseCanvas(thumbnailCanvas);
+    releaseCanvasBackingStore(fullCanvas);
+    releaseCanvasBackingStore(thumbnailCanvas);
     jobs.delete(request.jobId);
     post({
       type: "preparationFailed",
@@ -147,7 +148,7 @@ function discard(jobId: number): void {
   const job = jobs.get(jobId);
   if (job === undefined) return;
   jobs.delete(jobId);
-  releaseCanvas(job.thumbnailCanvas);
+  releaseCanvasBackingStore(job.thumbnailCanvas);
 }
 
 function containedDimensions(
@@ -162,12 +163,6 @@ function containedDimensions(
     width: Math.max(1, Math.round(width * scale)),
     height: Math.max(1, Math.round(height * scale)),
   };
-}
-
-function releaseCanvas(canvas: OffscreenCanvas | undefined): void {
-  if (canvas === undefined) return;
-  canvas.width = 1;
-  canvas.height = 1;
 }
 
 class WorkerImageProcessingFailure extends Error {

@@ -1,5 +1,6 @@
 import type { CaptureError } from "../core/errors";
 import { causeName } from "../core/errors";
+import { releaseCanvasBackingStore } from "./canvas-memory";
 
 export type EncodedWorkerVideoFrame = Readonly<{
   blob: Blob;
@@ -41,7 +42,7 @@ export async function encodeWorkerVideoFrame(
     throw videoFrameWorkerFailure(cause);
   } finally {
     if (!bitmapClosed) bitmap.close();
-    releaseCanvas(canvas);
+    releaseCanvasBackingStore(canvas);
   }
 }
 
@@ -63,10 +64,4 @@ function videoFrameWorkerFailure(cause: unknown): VideoFrameWorkerFailure {
 
 function elapsed(clock: () => number, startedAt: number): number {
   return Math.max(0, clock() - startedAt);
-}
-
-function releaseCanvas(canvas: OffscreenCanvas | undefined): void {
-  if (canvas === undefined) return;
-  canvas.width = 1;
-  canvas.height = 1;
 }
