@@ -8,14 +8,16 @@ describe("privacy contract", () => {
     expect(INITIAL_CONSTRAINTS.audio).toBe(false);
   });
 
-  it("does not contain persistent storage, upload, download, or telemetry APIs", () => {
+  it("does not contain image persistence, upload, download, or telemetry APIs", () => {
     const source = sourceText("src");
     const forbidden = [
-      "localStorage",
       "sessionStorage",
       "indexedDB",
       "caches.open",
       "serviceWorker",
+      "navigator.storage",
+      "showSaveFilePicker",
+      "showDirectoryPicker",
       "fetch(",
       "XMLHttpRequest",
       "sendBeacon",
@@ -23,6 +25,18 @@ describe("privacy contract", () => {
       ".download",
     ];
     forbidden.forEach((token) => expect(source, `unexpected ${token}`).not.toContain(token));
+  });
+
+  it("allows Web Storage only at the typed preferences boundary", () => {
+    const files = sourceFiles("src");
+    const storageUsers = files.filter((file) =>
+      readFileSync(file, "utf8").includes("localStorage"),
+    );
+    expect(storageUsers.map((file) => file.replaceAll("\\", "/"))).toEqual([
+      "src/platform/preferences.ts",
+    ]);
+    const preferences = readFileSync("src/platform/preferences.ts", "utf8");
+    expect(preferences).not.toMatch(/\bBlob\b|objectURL|deviceId|widthPx|heightPx/);
   });
 
   it("places CSP and referrer policy before every resource", () => {
@@ -46,4 +60,11 @@ function sourceText(directory: string): string {
       return statSync(path).isDirectory() ? sourceText(path) : readFileSync(path, "utf8");
     })
     .join("\n");
+}
+
+function sourceFiles(directory: string): string[] {
+  return readdirSync(directory).flatMap((name) => {
+    const path = join(directory, name);
+    return statSync(path).isDirectory() ? sourceFiles(path) : [path];
+  });
 }

@@ -1,5 +1,6 @@
 import type { CameraError, ClipboardError } from "./errors";
 import type { SuspensionReason } from "./idle";
+import type { IdleTimeout } from "./idle";
 import { addCapture, addCaptureThumbnail, removeCapture, shouldWarnAboutMemory } from "./history";
 import type {
   AppModel,
@@ -39,6 +40,7 @@ export type AppAction =
   | Readonly<{ type: "devicesUpdated"; cameras: readonly CameraDescriptor[] }>
   | Readonly<{ type: "photoCapabilityUpdated"; capability: PhotoCapabilityState }>
   | Readonly<{ type: "capturePreferenceChanged"; preference: CapturePreference }>
+  | Readonly<{ type: "idleTimeoutChanged"; timeout: IdleTimeout }>
   | Readonly<{ type: "captureAdded"; entry: CaptureEntry }>
   | Readonly<{ type: "captureThumbnailAdded"; captureId: CaptureId; thumbnail: Blob }>
   | Readonly<{ type: "copyStarted"; captureId: CaptureId }>
@@ -109,6 +111,8 @@ export function update(model: AppModel, action: AppAction): AppModel {
       };
     case "capturePreferenceChanged":
       return { ...model, capturePreference: action.preference };
+    case "idleTimeoutChanged":
+      return { ...model, idleTimeout: action.timeout };
     case "captureAdded": {
       const history = addCapture(model.history, action.entry);
       return {

@@ -134,4 +134,9 @@ describe("update", () => {
       settings: { widthPx: 8160, heightPx: 6120 },
     });
   });
+
+  it("stores only a valid idle timeout in the app model", () => {
+    const updated = update(initialModel, { type: "idleTimeoutChanged", timeout: "off" });
+    expect(updated.idleTimeout).toBe("off");
+  });
 });
