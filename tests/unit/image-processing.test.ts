@@ -24,7 +24,9 @@ describe("Canvas image processing fallback", () => {
       Promise.resolve({ width: 4000, height: 3000, close } as unknown as ImageBitmap),
     );
     vi.stubGlobal("createImageBitmap", createImageBitmap);
-    const canvases = [fakeCanvas(), fakeCanvas()];
+    const thumbnailCanvas = fakeCanvas();
+    const fullCanvas = fakeCanvas();
+    const canvases = [thumbnailCanvas, fullCanvas];
     const port = new CanvasImageProcessingPort(() => canvases.shift()!.canvas);
     const image = new Blob(["jpeg"], { type: "image/jpeg" });
 
@@ -38,6 +40,29 @@ describe("Canvas image processing fallback", () => {
     expect(createImageBitmap).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
     expect(canvases).toHaveLength(0);
+    expect(thumbnailCanvas.canvas).toMatchObject({ width: 1, height: 1 });
+    expect(fullCanvas.canvas).toMatchObject({ width: 1, height: 1 });
+  });
+
+  it("maps native-image allocation failure and releases every acquired resource", async () => {
+    const close = vi.fn();
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(() =>
+        Promise.resolve({ width: 8_160, height: 6_120, close } as unknown as ImageBitmap),
+      ),
+    );
+    const thumbnailCanvas = fakeCanvas();
+    const fullCanvas = allocationFailingCanvas();
+    const canvases = [thumbnailCanvas.canvas, fullCanvas];
+    const port = new CanvasImageProcessingPort(() => canvases.shift()!);
+
+    await expect(port.prepare(new Blob(["jpeg"], { type: "image/jpeg" }), true)).rejects.toThrow(
+      "memoryAllocationFailed",
+    );
+    expect(close).toHaveBeenCalledOnce();
+    expect(thumbnailCanvas.canvas).toMatchObject({ width: 1, height: 1 });
+    expect(fullCanvas).toMatchObject({ width: 1, height: 1 });
   });
 
   it("uses the Canvas video baseline when Worker initialization fails", async () => {
@@ -167,6 +192,27 @@ describe("Worker image processing adapter", () => {
 
     await expect(result).resolves.toBe(fallbackResult);
     expect(fallback).toHaveBeenCalledOnce();
+    port.dispose();
+  });
+
+  it("does not repeat a video-frame allocation failure on the main thread", async () => {
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(() => Promise.resolve(fakeBitmap(8_160, 6_120))),
+    );
+    const worker = new FakeWorker();
+    const fallback = vi.fn(() => Promise.resolve(fakeEncodedVideoFrame()));
+    const port = new WorkerImageProcessingPort(worker, fakeFallback());
+    const result = port.processVideoFrame({} as HTMLVideoElement, fallback, () =>
+      performance.now(),
+    );
+    await vi.waitFor(() => expect(worker.videoFrameJobIds()).toHaveLength(1));
+    const jobId = worker.videoFrameJobIds()[0]!;
+    worker.emit({ type: "videoFrameAccepted", jobId });
+    worker.emit({ type: "videoFrameFailed", jobId, error: { tag: "memoryAllocationFailed" } });
+
+    await expect(result).rejects.toThrow("memoryAllocationFailed");
+    expect(fallback).not.toHaveBeenCalled();
     port.dispose();
   });
 
@@ -303,6 +349,42 @@ describe("Worker image processing adapter", () => {
 
     await expect(preparation).resolves.toMatchObject({ dimensions: { width: 12, height: 8 } });
     expect(fallback.prepare).toHaveBeenCalledWith(image, true);
+    port.dispose();
+  });
+
+  it("does not repeat a native-image allocation failure in the Canvas fallback", async () => {
+    const worker = new FakeWorker();
+    const fallback = fakeFallback();
+    const port = new WorkerImageProcessingPort(worker, fallback);
+    const preparation = port.prepare(new Blob(["jpeg"], { type: "image/jpeg" }), true);
+    worker.emit({
+      type: "preparationFailed",
+      jobId: worker.singleJobId(),
+      error: { tag: "memoryAllocationFailed" },
+    });
+
+    await expect(preparation).rejects.toThrow("memoryAllocationFailed");
+    expect(fallback.prepare).not.toHaveBeenCalled();
+    port.dispose();
+  });
+
+  it("does not repeat an asynchronous Clipboard PNG allocation failure", async () => {
+    const worker = new FakeWorker();
+    const fallback = fakeFallback();
+    const port = new WorkerImageProcessingPort(worker, fallback);
+    const preparation = port.prepare(new Blob(["jpeg"], { type: "image/jpeg" }), true);
+    const jobId = worker.singleJobId();
+    worker.emit({ type: "prepared", jobId, width: 8_160, height: 6_120 });
+    const prepared = await preparation;
+    worker.emit({
+      type: "clipboardPngFailed",
+      jobId,
+      error: { tag: "memoryAllocationFailed" },
+    });
+
+    await expect(prepared.clipboardPng).rejects.toThrow("memoryAllocationFailed");
+    expect(fallback.prepare).not.toHaveBeenCalled();
+    prepared.dispose();
     port.dispose();
   });
 
@@ -450,4 +532,26 @@ function fakeCanvas(): Readonly<{ canvas: HTMLCanvasElement }> {
     }),
   } as unknown as HTMLCanvasElement;
   return { canvas };
+}
+
+function allocationFailingCanvas(): HTMLCanvasElement {
+  let width = 0;
+  let height = 0;
+  return {
+    get width() {
+      return width;
+    },
+    set width(value: number) {
+      if (value > 1) throw new DOMException("", "QuotaExceededError");
+      width = value;
+    },
+    get height() {
+      return height;
+    },
+    set height(value: number) {
+      height = value;
+    },
+    getContext: vi.fn(() => ({ drawImage: vi.fn() })),
+    toBlob: vi.fn(),
+  } as unknown as HTMLCanvasElement;
 }
