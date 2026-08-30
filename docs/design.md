@@ -2,8 +2,8 @@
 
 | 項目 | 内容 |
 | --- | --- |
-| 文書状態 | V2 Phase 7 acceptance / memory hardeningまでの実装設計 |
-| Version | 0.7.0 |
+| 文書状態 | V2 Phase 8 automated release hardeningまでの実装設計 |
+| Version | 0.8.0 |
 | 作成日 | 2026-08-30 |
 | 仮称 | Camera Clipboard |
 | 対象 | mobile / tablet / desktop のmodern browser |
@@ -701,7 +701,7 @@ RepositoryのSettings → Pages → Build and deployment → Sourceを「GitHub 
 
 Pipelineを次の二段階に分ける。
 
-1. **Verify:** pull requestと`main`へのpushで`npm ci`、format check、lint、TypeScript typecheck、unit test、production buildを実行する。
+1. **Verify:** pull requestと`main`へのpushで`npm ci`、repository hygiene、format check、lint、TypeScript typecheck、unit / integration test、production build、browser E2Eを実行する。
 2. **Deploy:** `main`へのpushでVerifyが成功した場合だけ`dist/`をPages artifactとしてuploadし、`github-pages` environmentへdeployする。
 
 Workflow contractは次のとおりである。
@@ -713,6 +713,7 @@ Workflow contractは次のとおりである。
 - DependabotでGitHub Actionsとnpm dependencyのupdateを確認する。
 - generated `dist/`を`main`へcommitしない。
 - deploy失敗時に直前の成功deploymentを破壊しない。
+- repository hygiene gateはGitでtrackedなfileだけを対象に、UTF-8、MIT license、package metadata / lockfile、secret pattern、危険なfilename、1 MiB超のfileを検査する。generated artifact、dependency、browser binaryは対象外とする。
 
 GitHub Pagesはcustom GitHub Actions workflowによるbuildとdeploymentを正式にsupportする。[GitHub Docs: Using custom workflows with GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)
 
@@ -862,7 +863,7 @@ Worker経路では`createImageBitmap(video)`のsettlementを`videoFrameAcquire`�
 
 ## 18. Acceptance criteria
 
-v1は次をすべて満たした時点で完成とする。
+V2は次をすべて満たした時点で完成とする。
 
 - [ ] 初期画面からuser actionでcameraを開始できる。
 - [ ] microphone permissionを要求しない。
@@ -884,6 +885,8 @@ v1は次をすべて満たした時点で完成とする。
 - [ ] `vite.config.ts`の`base`が`/webcam-app/`である。
 - [ ] pull requestではdeployせず、`main`のverified buildだけをPagesへdeployする。
 - [ ] GitHub Pagesでは設定不能なsecurity headerとmeta CSPの保証範囲が文書化されている。
+
+2026-08-30のclean installによる自動release verificationでは、27 test file / 142 unit・integration test、Playwright 60 case（34 pass / 26 capability skip）、production build、repository hygieneを完了した。initial JavaScriptはgzip 22.50 kBでNFR-01を満たし、production URLのHTML、Manifest、icon、base path、meta CSP、`connect-src 'none'`をHTTPで確認した。PWAの実install、実camera / Clipboard、Safari / Firefox fallback、VoiceOverはbrowser / OS / device依存のためmanual QAが完了条件として残る。
 
 ## 19. Implementation plan
 

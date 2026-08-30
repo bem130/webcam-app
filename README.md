@@ -77,7 +77,7 @@ npx.cmd playwright install chromium firefox webkit
 npm.cmd run verify
 ```
 
-`verify` は source gate (`format`、lint、strict TypeScript、unit/integration test、production build) と全browser E2Eをすべて実行します。短いfeedback loopには`npm.cmd run verify:source`、browserだけには`npm.cmd run verify:e2e`を使えます。E2E は初期 permission UX、axe による WCAG A/AA 検査、small viewport、Chromium fake camera による capture/copy/history/no-network/no-storage/reload を確認します。
+`verify` は repository hygiene、format、lint、strict TypeScript、unit/integration test、production build、全browser E2Eをすべて実行します。repository gateはtracked fileのUTF-8、license / package metadata、lockfile、secretらしい内容、危険なfilename、1 MiBを超えるfileを検査します。短いfeedback loopには`npm.cmd run verify:source`、browserだけには`npm.cmd run verify:e2e`を使えます。E2E は初期 permission UX、axe による WCAG A/AA 検査、4 viewport、keyboard / focus、reduced motion、forced colors、Chromium fake cameraによるcapture / copy / history / idle inhibition / no-network / no-storage / reloadと、mockではないClipboard PNG write / read-backを確認します。
 
 実機の camera/Clipboard/assistive technology は browser automation だけでは保証できません。release 前に [手動 QA](docs/manual-qa.md) を対象端末で実施してください。
 
