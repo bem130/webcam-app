@@ -2,6 +2,7 @@ import type { CaptureError } from "../core/errors";
 import { causeName } from "../core/errors";
 import { some } from "../core/result";
 import type { Dimensions, EncodedVideoFrame } from "./capture";
+import { releaseCanvasBackingStore } from "./canvas-memory";
 import type { ImageProcessingRequest, ImageProcessingResponse } from "./image-processing-protocol";
 
 export type PreparedImage = Readonly<{
@@ -121,7 +122,7 @@ export class CanvasImageProcessingPort implements ImageProcessingPort {
             blob,
             durationMs: Math.max(0, performance.now() - startedAt),
           }))
-          .finally(() => releaseCanvas(pngCanvas));
+          .finally(() => releaseCanvasBackingStore(pngCanvas));
       }
 
       bitmap.close();
@@ -139,20 +140,20 @@ export class CanvasImageProcessingPort implements ImageProcessingPort {
             "image/jpeg",
             { tag: "thumbnailEncodingFailed" },
             0.82,
-          ).finally(() => releaseCanvas(retainedThumbnailCanvas));
+          ).finally(() => releaseCanvasBackingStore(retainedThumbnailCanvas));
           return thumbnailPromise;
         },
         dispose: () => {
           if (disposed) return;
           disposed = true;
-          releaseCanvas(fullCanvas);
-          releaseCanvas(retainedThumbnailCanvas);
+          releaseCanvasBackingStore(fullCanvas);
+          releaseCanvasBackingStore(retainedThumbnailCanvas);
         },
       };
     } catch (cause) {
       bitmap?.close();
-      releaseCanvas(fullCanvas);
-      releaseCanvas(thumbnailCanvas);
+      releaseCanvasBackingStore(fullCanvas);
+      releaseCanvasBackingStore(thumbnailCanvas);
       throw imageProcessingFailure(cause, { tag: "imageDecodeFailed" });
     }
   }
@@ -540,12 +541,6 @@ function canvasToBlob(
       reject(imageProcessingFailure(cause, captureError));
     }
   });
-}
-
-function releaseCanvas(canvas: HTMLCanvasElement | undefined): void {
-  if (canvas === undefined) return;
-  canvas.width = 1;
-  canvas.height = 1;
 }
 
 function failure(error: CaptureError): ImageProcessingFailure {
