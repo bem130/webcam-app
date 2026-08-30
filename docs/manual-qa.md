@@ -41,6 +41,7 @@
 - [ ] 通常URLの3000×4000動画フレームで「動画処理経路」が`Worker OffscreenCanvas (2D)`となり、`動画フレーム取得`、`Worker handoff`、`raster準備`、`PNG encode`を記録できる。
 - [ ] 同じbuildを`?videoFramePipeline=canvas`付きで開くと「動画処理経路」が`main-thread Canvas`となり、Worker handoffは未実行になる。画像や診断選択はreloadを越えて保存されない。
 - [ ] Worker経路とCanvas baselineで、Clipboard完了までの時間を同じcamera、同じ3000×4000、近い被写体条件で各3回以上測定する。固定ms thresholdではなく中央値とstage構成を比較する。
+- [ ] 連続する高解像度capture後も前回の巨大canvas backing storeが保持されず、memory allocation failure時に同じframeをmain-thread Canvasで再試行しない。
 - [ ] 3000×4000 native still routeの約3秒という変更前baselineと同じcamera・解像度で比較し、Worker route / fallback routeと各stageを記録する。
 - [ ] copy の成功・失敗が text と screen reader live region で判別できる。
 - [ ] copy成功通知が390×844でshutterやcamera selectorへ重ならず左下に表示され、約3秒で消える。error / warningは手動で閉じるまで確認できる。
