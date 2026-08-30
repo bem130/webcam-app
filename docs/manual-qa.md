@@ -104,9 +104,15 @@
 
 ## Production deployment
 
-- [ ] `npm ci`、`npm run verify`、`npm run test:e2e` が clean checkout で成功する。
-- [ ] pull request workflow では deploy job が skip される。
-- [ ] `main` の成功 workflow だけが GitHub Pages artifact を deploy する。
-- [ ] production `index.html` の asset URL が `/webcam-app/` 配下で解決する。
-- [ ] production HTML の resource より前に meta CSP と referrer policy があり、inline script/style がない。
+- [x] `npm ci`、`npm run verify`、`npm run test:e2e` が clean checkout で成功する。
+- [x] pull request workflow では deploy job が skip される。
+- [x] `main` の成功 workflow だけが GitHub Pages artifact を deploy する。
+- [x] production `index.html` の asset URL が `/webcam-app/` 配下で解決する。
+- [x] production HTML の resource より前に meta CSP と referrer policy があり、inline script/style がない。
 - [ ] production URL で camera、capture、actual paste が動作する。
+
+### Phase 8 automated release verification（2026-08-30）
+
+clean `npm ci`は209 package / 0 vulnerability、`npm run verify`は27 test file / 142 unit・integration testとPlaywright 60 case（34 pass / 26 capability skip）を完了した。production buildはinitial JavaScript 68.09 kB（gzip 22.50 kB）、Worker 3.32 kB、CSS 13.27 kB（gzip 3.65 kB）、`index.html` 1.19 kBだった。
+
+production URL、Manifest、192 / 512 / maskable iconはHTTP 200で、Manifestの`id` / `start_url` / `scope`は`/webcam-app/`、`display`は`standalone`だった。HTMLのbase path、meta CSP、`connect-src 'none'`も確認した。検証環境には接続済みbrowserがなかったため、rendered production UI、PWA install、実camera / Clipboard、Safari / Firefox fallback、VoiceOverは未実施であり、上記checklistを完了扱いにしていない。
