@@ -109,6 +109,18 @@
   font-weight: 650;
   pointer-events: auto;
 }
+.settings-button {
+  grid-row: 1;
+  grid-column: 1;
+  justify-self: start;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  place-items: center;
+  border-radius: 50%;
+  pointer-events: auto;
+}
 .camera-active > span {
   width: 8px;
   height: 8px;
@@ -137,32 +149,6 @@
 }
 .camera-quality strong {
   font-variant-numeric: tabular-nums;
-}
-
-.capture-preference {
-  grid-row: 3;
-  grid-column: 2;
-  justify-self: center;
-  display: grid;
-  min-width: min(250px, calc(100vw - 120px));
-  gap: 3px;
-  margin-top: 8px;
-  padding: 6px 9px;
-  border-radius: 10px;
-  pointer-events: auto;
-}
-.capture-preference > span,
-.capture-preference > small {
-  color: var(--muted);
-  font-size: 0.65rem;
-}
-.capture-preference select {
-  min-height: 44px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: #fff;
-  background: #1c1c1e;
-  font: inherit;
 }
 
 .camera-menu {
@@ -656,6 +642,54 @@
   border-radius: var(--sheet-radius);
   color: #fff;
   background: #2c2c2e;
+}
+.settings-dialog {
+  width: min(calc(100% - 32px), 480px);
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--sheet-radius);
+  color: #fff;
+  background: #2c2c2e;
+}
+.settings-dialog::backdrop {
+  background: rgb(0 0 0 / 52%);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
+}
+.settings-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+.settings-heading h2 {
+  margin: 3px 0 0;
+  font-size: 1.65rem;
+}
+.settings-form {
+  display: grid;
+  gap: 18px;
+}
+.settings-field {
+  display: grid;
+  gap: 7px;
+}
+.settings-field > span {
+  font-weight: 700;
+}
+.settings-field > small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+.settings-field select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: #fff;
+  background: #1c1c1e;
+  font: inherit;
 }
 .confirm-dialog h2 {
   margin-top: 0;

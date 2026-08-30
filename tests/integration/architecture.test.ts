@@ -46,6 +46,7 @@ describe("architecture dependency contract", () => {
     const dialogs = [
       readFileSync("src/ui/history-panel.tsx", "utf8"),
       readFileSync("src/ui/confirm-dialog.tsx", "utf8"),
+      readFileSync("src/ui/settings-dialog.tsx", "utf8"),
     ];
 
     zIndexes.forEach((value) => expect(value).toMatch(/^var\(--z-generated-[a-z-]+\)$/));
@@ -54,7 +55,7 @@ describe("architecture dependency contract", () => {
     ].sort();
     expect(referencedLayers).toEqual([...GENERATED_Z_INDEX_LAYERS].sort());
     dialogs.forEach((source) => expect(source).toContain(".showModal()"));
-    expect(css).not.toMatch(/\.(?:history|confirm)-dialog\s*\{[^}]*z-index:/s);
+    expect(css).not.toMatch(/\.(?:history|confirm|settings)-dialog\s*\{[^}]*z-index:/s);
   });
 
   it("keeps camera-local overlays in their semantic render order", () => {
@@ -71,7 +72,9 @@ describe("architecture dependency contract", () => {
     expect(backToFront).toEqual([...backToFront].sort((left, right) => left - right));
 
     const topbarBackToFront = [
-      'class="capture-preference material"',
+      'class="settings-button material"',
+      'class="camera-active material"',
+      'class="camera-quality material"',
       'class="camera-menu-wrap"',
     ].map((token) => cameraView.indexOf(token));
     expect(topbarBackToFront.every((index) => index >= 0)).toBe(true);

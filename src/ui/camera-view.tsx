@@ -5,11 +5,10 @@ import type {
   CameraId,
   CameraState,
   CameraVideoSettings,
-  CapturePreference,
   PhotoCapabilityState,
   PhotoCaptureSettings,
 } from "../core/model";
-import { CameraIcon, ChevronIcon, SwapIcon } from "./icons";
+import { CameraIcon, ChevronIcon, SettingsIcon, SwapIcon } from "./icons";
 
 type CameraViewProps = Readonly<{
   videoRef: RefObject<HTMLVideoElement>;
@@ -20,7 +19,6 @@ type CameraViewProps = Readonly<{
   currentCamera: CameraDescriptor | null;
   videoSettings: CameraVideoSettings | null;
   photoCapability: PhotoCapabilityState;
-  capturePreference: CapturePreference;
   menuOpen: boolean;
   historyCount: number;
   latestThumbnailUrl: string | null;
@@ -31,7 +29,7 @@ type CameraViewProps = Readonly<{
   onCloseMenu: () => void;
   onSelectCamera: (id: CameraId) => void;
   onCapture: () => void;
-  onCapturePreferenceChange: (preference: CapturePreference) => void;
+  onOpenSettings: () => void;
   onQuickSwap: () => void;
   onOpenHistory: () => void;
 }>;
@@ -46,7 +44,6 @@ export function CameraView(props: CameraViewProps) {
     currentCamera,
     videoSettings,
     photoCapability,
-    capturePreference,
     menuOpen,
     historyCount,
     latestThumbnailUrl,
@@ -57,7 +54,7 @@ export function CameraView(props: CameraViewProps) {
     onCloseMenu,
     onSelectCamera,
     onCapture,
-    onCapturePreferenceChange,
+    onOpenSettings,
     onQuickSwap,
     onOpenHistory,
   } = props;
@@ -89,6 +86,15 @@ export function CameraView(props: CameraViewProps) {
       />
       {!inactive && (
         <header class="camera-topbar">
+          <button
+            class="settings-button material"
+            type="button"
+            aria-label="設定を開く"
+            title="設定を開く"
+            onClick={onOpenSettings}
+          >
+            <SettingsIcon />
+          </button>
           <p class="camera-active material">
             <span aria-hidden="true" />
             カメラ使用中
@@ -115,28 +121,6 @@ export function CameraView(props: CameraViewProps) {
               )}
             </p>
           )}
-          <label class="capture-preference material">
-            <span>撮影方式</span>
-            <select
-              aria-label="撮影方式"
-              value={photoCapability.tag === "supported" ? capturePreference : "videoFrame"}
-              disabled={captureBusy}
-              onChange={(event) =>
-                onCapturePreferenceChange(
-                  event.currentTarget.value === "photoPreferred" ? "photoPreferred" : "videoFrame",
-                )
-              }
-            >
-              <option value="photoPreferred" disabled={photoCapability.tag !== "supported"}>
-                写真優先
-              </option>
-              <option value="videoFrame">動画フレーム</option>
-            </select>
-            {photoCapability.tag === "checking" && <small>写真APIを確認中です</small>}
-            {photoCapability.tag === "unsupported" && (
-              <small>このカメラでは写真APIを利用できません</small>
-            )}
-          </label>
           <div class="camera-menu-wrap">
             <button
               class="camera-selector material"
