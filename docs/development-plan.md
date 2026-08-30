@@ -4,7 +4,7 @@
 | -------------- | -------------------------------------- |
 | 文書状態       | V2実装計画                             |
 | Version        | 2.1                                    |
-| 更新日         | 2026-08-29                             |
+| 更新日         | 2026-08-30                             |
 | 対象branch     | `main`                                 |
 | Production URL | `https://bem130.github.io/webcam-app/` |
 
@@ -23,7 +23,7 @@
 |     4 | Idle timeout core + hard camera suspend                         | 完了 (`b228df4`) |
 |     5 | Screensaver + interaction-based resume                          | 完了 (`b801ff5`) |
 |     6 | Preferences (idle timeout + capture mode)                       | 完了 (`93edea5`) |
-|     7 | Acceptance automation + high-resolution memory hardening        | 未着手           |
+|     7 | Acceptance automation + high-resolution memory hardening        | 完了 (`fa767ab`) |
 |     8 | Documentation + release hardening                               | 未着手           |
 
 各phaseは単独でbuild・test・deploy可能な状態で完了させる。複数phaseを一つのcommitへまとめず、phaseごとに実装、検証、diff review、commit、pushを行う。Phase 3の`ImageCapture`が利用できない環境でも、Phase 2のvideo-frame captureだけで完全に利用可能な状態を保つ。Phase 3.5と3.6は実機で顕在化したcapture / Clipboard latencyをPhase 4より先に扱い、Phase 4以降のidle lifecycleへ重い画像処理を持ち越さない。
@@ -655,9 +655,26 @@ ac670ff feat: add typed preference storage boundary
 - transient allocation failureをtyped errorへ写像し、camera streamと既存historyを壊さない。
 - 履歴Blob合計の既存warningと、capture瞬間のtransient memory対策を別のcontractとして扱う。
 
+### 完了内容
+
+- 4 required viewport、keyboard focus / Escape、reduced motion、forced colors、4K preview / still capability分離表示をbrowser acceptanceへ固定した。
+- ChromiumでmockではないClipboardへportable PNGを書込み、同じbrowser contextからread-backするgateを追加した。
+- capture source取得中のidle抑止と、完了後のtimer再armをbrowser testで確認した。
+- main-thread / Worker双方のcanvas backing store cleanupを共通化し、success / failure / consecutive captureで1×1へ縮小するcontractを固定した。
+- `QuotaExceededError`を`memoryAllocationFailed`へ写像し、同じ巨大allocationをWorkerからCanvasへ再試行しない。通常のWorker failure fallbackは維持する。
+
+### 完了commits
+
+```text
+7b3fbba fix: harden high-resolution canvas cleanup
+dd4463c fix: avoid retrying memory allocation failures
+a7cb912 test: expand V2 browser acceptance coverage
+fa767ab test: cover capture idle inhibition in browser
+```
+
 ### Commit
 
-`test: complete phase 7 V2 acceptance hardening`
+上記のresource hardeningとacceptance concernごとに分割して完了した。
 
 ## 10. Phase 8: Documentation + release hardening
 

@@ -2,8 +2,8 @@
 
 | 項目 | 内容 |
 | --- | --- |
-| 文書状態 | V2 Phase 6 preferencesまでの実装設計 |
-| Version | 0.6.0 |
+| 文書状態 | V2 Phase 7 acceptance / memory hardeningまでの実装設計 |
+| Version | 0.7.0 |
 | 作成日 | 2026-08-30 |
 | 仮称 | Camera Clipboard |
 | 対象 | mobile / tablet / desktop のmodern browser |
@@ -597,7 +597,7 @@ PNGはcapture domainの固定形式ではなくClipboard互換representationと�
 - native stillはapplication起動時に作るpersistent Dedicated Workerへ渡し、`createImageBitmap()`によるfull-resolution decodeを一回に集約する。
 - 一つのdecoded imageから実dimensions、portable PNG用full-size `OffscreenCanvas`、320 px thumbnail用small `OffscreenCanvas`を準備し、直ちに`ImageBitmap.close()`する。
 - Workerの2D contextはopaque camera imageとして`{ alpha: false }`を指定し、`willReadFrequently`は既定で使わない。
-- WorkerまたはOffscreenCanvasが利用不能・失敗した場合は、同じdecode-once contractを持つmain-thread Canvas adapterへ一度fallbackする。
+- WorkerまたはOffscreenCanvasが利用不能・通常のruntime failureになった場合は、同じdecode-once contractを持つmain-thread Canvas adapterへ一度fallbackする。`memoryAllocationFailed`は同じ巨大allocationを繰り返さず、そのままtyped errorとして返す。
 - native Blobを両adapterで検証・decodeできない場合はtyped capture errorとし、camera source解放後の別時点のvideo frameへ暗黙fallbackしない。`takePhoto()`自体の失敗時だけlive video frameへfallbackする。
 - source dimensionsを検証し、capture artifactには同じdimensionsを使う。thumbnailだけはlong edge 320 pxへ縮小する。
 - front previewのCSS transformをCanvasへ適用しない。
@@ -607,6 +607,7 @@ PNGはcapture domainの固定形式ではなくClipboard互換representationと�
 - capture artifact完成時はpending thumbnailのままhistoryへ追加し、Clipboard settlement後に320 px square以内のJPEG thumbnailを生成・更新する。thumbnailはUI専用でありClipboardには使わない。
 - full-size canvasはPNG完成後に1×1へ縮小し、Clipboard settlementまで保持するのは320 px raster相当だけにする。
 - 一時`ImageBitmap`を用いた場合は必ず`close()`する。
+- canvas backing storeの縮小はsuccess / failure / consecutive captureの全経路で行う。cleanup failureは元のcapture結果を上書きしない。
 
 ## 11. In-memory history and resource management
 
@@ -836,6 +837,11 @@ Worker経路では`createImageBitmap(video)`のsettlementを`videoFrameAcquire`�
 - background → foreground復帰
 - idle screensaverがshutter位置のtapをconsumeし、pointer / keyboard / wheelで一度だけ再開する
 - 320×568、focus復元、live status、reduced motionでscreensaver contractを維持する
+- 320×568、390×844、768×1024、1280×800でprimary actionがviewport内に収まり、horizontal overflowがない
+- keyboardだけでcamera開始とsettings操作ができ、Escapeでtop-layer dialogを閉じて起点へfocusが戻る
+- Chromiumの実Clipboardへportable PNGを書込み、同じbrowser contextで`image/png`をread-backできる
+- 4K preview settingsと最大still capabilityを別々の値として表示する
+- capture source取得中はidle hard stopを延期し、取得完了後にtimeoutを再armする
 - shutter連打時にtransactionが重複しない
 - Notes、chat app、image editor等へPNGを実際にpasteできる
 - reload後にhistoryが空である
