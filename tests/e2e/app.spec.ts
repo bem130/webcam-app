@@ -9,6 +9,7 @@ declare global {
     __cameraTrackStopCount: number;
     __objectUrlCreateCount: number;
     __objectUrlRevokeCount: number;
+    __completePhotoCapture: () => void;
   }
 }
 
@@ -145,10 +146,8 @@ test("displays actual 4K preview settings separately from maximum still capabili
 }) => {
   test.skip(browserName !== "chromium", "The deterministic camera adapters use Chromium.");
   await page.addInitScript(() => {
-    const originalGetSettings = MediaStreamTrack.prototype.getSettings;
     MediaStreamTrack.prototype.getSettings = function () {
       return {
-        ...originalGetSettings.call(this),
         width: 3840,
         height: 2160,
         frameRate: 30,
@@ -434,6 +433,72 @@ test("persists typed preferences and rearms or disables the idle timer", async (
   await expect(page.getByRole("heading", { name: "カメラを停止しました" })).toHaveCount(0);
   await page.clock.runFor(1);
   await expect(page.getByRole("dialog", { name: "設定" })).toBeHidden();
+  await expect(page.getByRole("heading", { name: "カメラを停止しました" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__cameraTrackStopCount)).toBe(1);
+});
+
+test("defers idle suspension until capture source acquisition completes", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== "chromium",
+    "The deterministic delayed photo capture is configured for Chromium.",
+  );
+  await page.clock.install();
+  await installClipboardMock(page);
+  await page.addInitScript(() => {
+    let complete: (() => void) | undefined;
+    const photo = new Promise<Blob>((resolve, reject) => {
+      complete = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 4;
+        canvas.height = 3;
+        const context = canvas.getContext("2d");
+        if (context === null) {
+          reject(new Error("canvas unavailable"));
+          return;
+        }
+        context.fillRect(0, 0, 4, 3);
+        canvas.toBlob((blob) => {
+          if (blob === null) reject(new Error("photo encode failed"));
+          else resolve(blob);
+        }, "image/png");
+      };
+    });
+    window.__completePhotoCapture = () => complete?.();
+    class DelayedImageCapture {
+      getPhotoCapabilities() {
+        return Promise.resolve({
+          imageWidth: { min: 1, max: 4, step: 1 },
+          imageHeight: { min: 1, max: 3, step: 1 },
+        });
+      }
+
+      takePhoto() {
+        return photo;
+      }
+    }
+    Object.defineProperty(globalThis, "ImageCapture", {
+      configurable: true,
+      value: DelayedImageCapture,
+    });
+  });
+  await page.goto("./");
+  await page.getByRole("button", { name: "カメラを開始" }).click();
+  const shutter = page.getByRole("button", { name: "撮影してClipboardへコピー" });
+  await expect(shutter).toBeVisible({ timeout: 10_000 });
+  await shutter.click();
+
+  await page.clock.runFor(60_000);
+  expect(await page.evaluate(() => window.__cameraTrackStopCount)).toBe(0);
+  await expect(page.getByRole("heading", { name: "カメラを停止しました" })).toHaveCount(0);
+
+  await page.evaluate(() => window.__completePhotoCapture());
+  await expect(page.getByRole("button", { name: "履歴を開く（1件）" })).toBeVisible();
+  await page.clock.runFor(8_000);
+  expect(await page.evaluate(() => window.__cameraTrackStopCount)).toBe(0);
+  await page.clock.runFor(3_000);
   await expect(page.getByRole("heading", { name: "カメラを停止しました" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__cameraTrackStopCount)).toBe(1);
 });
