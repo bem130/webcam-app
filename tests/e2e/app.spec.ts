@@ -76,17 +76,107 @@ test("has no Chromium installability errors", async ({ page, browserName }) => {
   expect(installability.installabilityErrors).toEqual([]);
 });
 
-test("fits the primary action in a 320 by 568 viewport at 200 percent-equivalent width", async ({
+for (const viewport of [
+  { width: 320, height: 568 },
+  { width: 390, height: 844 },
+  { width: 768, height: 1024 },
+  { width: 1280, height: 800 },
+] as const) {
+  test(`fits the primary action in the required ${viewport.width} by ${viewport.height} viewport`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await page.goto("./");
+    const button = page.getByRole("button", { name: "カメラを開始" });
+    const box = await button.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box?.x).toBeGreaterThanOrEqual(0);
+    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(viewport.width);
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  });
+}
+
+test("supports keyboard focus, Escape, reduced motion, and forced colors", async ({
   page,
+  browserName,
 }) => {
-  await page.setViewportSize({ width: 320, height: 568 });
+  test.skip(
+    browserName !== "chromium",
+    "The deterministic fake camera and forced-colors emulation are configured for Chromium.",
+  );
+  await page.emulateMedia({ reducedMotion: "reduce", forcedColors: "active" });
   await page.goto("./");
-  const button = page.getByRole("button", { name: "カメラを開始" });
-  const box = await button.boundingBox();
-  expect(box).not.toBeNull();
-  expect(box?.x).toBeGreaterThanOrEqual(0);
-  expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(320);
-  expect(box?.height).toBeGreaterThanOrEqual(44);
+  expect(await page.evaluate(() => matchMedia("(forced-colors: active)").matches)).toBe(true);
+  expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(
+    true,
+  );
+
+  const start = page.getByRole("button", { name: "カメラを開始" });
+  await start.focus();
+  await page.keyboard.press("Enter");
+  const settingsButton = page.getByRole("button", { name: "設定を開く" });
+  await expect(settingsButton).toBeVisible({ timeout: 10_000 });
+  await settingsButton.focus();
+  await page.keyboard.press("Enter");
+  const settings = page.getByRole("dialog", { name: "設定" });
+  await expect(settings).toBeVisible();
+  await expect(settings.getByRole("heading", { name: "設定" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(settings).toBeHidden();
+  await expect(settingsButton).toBeFocused();
+
+  const flash = page.locator(".capture-flash");
+  expect(
+    await flash.evaluate((element) => ({
+      display: getComputedStyle(element).display,
+      forcedColorAdjust: getComputedStyle(element).forcedColorAdjust,
+    })),
+  ).toEqual({ display: "none", forcedColorAdjust: "auto" });
+  const material = page.locator(".camera-quality");
+  expect(await material.evaluate((element) => getComputedStyle(element).boxShadow)).toBe("none");
+});
+
+test("displays actual 4K preview settings separately from maximum still capability", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "The deterministic camera adapters use Chromium.");
+  await page.addInitScript(() => {
+    const originalGetSettings = MediaStreamTrack.prototype.getSettings;
+    MediaStreamTrack.prototype.getSettings = function () {
+      return {
+        ...originalGetSettings.call(this),
+        width: 3840,
+        height: 2160,
+        frameRate: 30,
+      };
+    };
+    class ResolutionImageCapture {
+      getPhotoCapabilities() {
+        return Promise.resolve({
+          imageWidth: { min: 1, max: 8160, step: 1 },
+          imageHeight: { min: 1, max: 6120, step: 1 },
+        });
+      }
+
+      takePhoto() {
+        return Promise.reject(new Error("not used by this display test"));
+      }
+    }
+    Object.defineProperty(globalThis, "ImageCapture", {
+      configurable: true,
+      value: ResolutionImageCapture,
+    });
+  });
+  await page.goto("./");
+  await page.getByRole("button", { name: "カメラを開始" }).click();
+
+  await expect(
+    page.getByLabel("プレビューの解像度 3840 × 2160、30 fps、撮影の最大解像度 8160 × 6120"),
+  ).toBeVisible({ timeout: 10_000 });
 });
 
 test("captures, copies, retains history in memory, and clears it on reload", async ({
@@ -174,6 +264,39 @@ test("keeps the captured image in history when Clipboard write fails", async ({
     page.getByRole("status").filter({ hasText: "Clipboardへの書込みが許可されませんでした。" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "履歴を開く（1件）" })).toBeVisible();
+});
+
+test("writes and reads back a portable PNG through the actual Chromium Clipboard", async ({
+  page,
+  browserName,
+  context,
+}) => {
+  test.skip(browserName !== "chromium", "Portable image Clipboard read-back uses Chromium.");
+  await context.grantPermissions(["camera", "clipboard-read", "clipboard-write"]);
+  await page.addInitScript(() => {
+    Object.defineProperty(globalThis, "ImageCapture", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  await page.goto("./?videoFramePipeline=canvas");
+  await page.getByRole("button", { name: "カメラを開始" }).click();
+  const shutter = page.getByRole("button", { name: "撮影してClipboardへコピー" });
+  await expect(shutter).toBeVisible({ timeout: 10_000 });
+  await shutter.click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Clipboardにコピーしました。" }),
+  ).toBeVisible({ timeout: 15_000 });
+
+  const clipboardImage = await page.evaluate(async () => {
+    const items = await navigator.clipboard.read();
+    const item = items.find((candidate) => candidate.types.includes("image/png"));
+    if (item === undefined) return undefined;
+    const blob = await item.getType("image/png");
+    return { type: blob.type, size: blob.size };
+  });
+  expect(clipboardImage).toMatchObject({ type: "image/png" });
+  expect(clipboardImage?.size).toBeGreaterThan(0);
 });
 
 test("prefers native still capture and allows an explicit video-frame choice", async ({
