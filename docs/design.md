@@ -2,8 +2,8 @@
 
 | 項目 | 内容 |
 | --- | --- |
-| 文書状態 | V2 Phase 5 idle screensaverまでの実装設計 |
-| Version | 0.5.0 |
+| 文書状態 | V2 Phase 6 preferencesまでの実装設計 |
+| Version | 0.6.0 |
 | 作成日 | 2026-08-30 |
 | 仮称 | Camera Clipboard |
 | 対象 | mobile / tablet / desktop のmodern browser |
@@ -57,7 +57,8 @@ camera previewを表示し、shutterを押すと静止画をClipboardへコピ�
 | FR-11 | camera接続・切断への追従 | 推奨 |
 | FR-12 | tabがbackgroundへ移った際のcamera suspendと復帰 | 推奨 |
 | FR-13 | browser / OS標準UIからのPWA install | 必須 |
-| FR-14 | `photoPreferred` / `videoFrame`のsession内選択とactual route表示 | 必須 |
+| FR-14 | `photoPreferred` / `videoFrame`の永続設定とactual route表示 | 必須 |
+| FR-15 | 10秒〜10分またはoffのidle timeout永続設定 | 必須 |
 
 ### 2.2 v1に含めない機能
 
@@ -116,6 +117,7 @@ AppleのUniversal Clipboardが有効な環境では、copyした画像が近く�
 - **P-06:** 削除したentryのObject URLを直ちにrevokeする。
 - **P-07:** document破棄時に全camera trackをstopし、全Object URLをrevokeする。
 - **P-08:** Clipboard書込みの事実と対象時刻はUIに表示してよいが、画像内容はlogへ出さない。
+- **P-09:** Web Storageへ保存するのはversion付きのidle timeoutとcapture preferenceだけとし、画像・device情報・timingを含めない。
 
 ## 4. User experience
 
@@ -211,6 +213,16 @@ backgroundではsoft disableに依存せず、applicationがhardware releaseを�
 - pointerdown後に同じgestureのclickが続いてもlocal guardとcamera request guardで一度しか再開しない。背後のshutter、history、camera selectorへeventを伝播させない。
 - screensaverは表示時にfocusを受け、accessible nameとlive statusを提供する。再開中はapp statusで通知し、成功後はshutterへfocusを戻す。失敗時は既存のtyped camera errorと再試行buttonへ遷移する。
 - screensaverはtransitionとanimationを持たず、320×568を含むviewport全体とsafe areaを覆う。
+
+### 4.9 Preferences
+
+- camera topbarのsettings buttonから`<dialog>.showModal()`によるtop-layer modalを開き、撮影方式とcamera自動停止時間を変更する。
+- `IdleTimeout`は`10s | 30s | 1m | 3m | 5m | 10m | off`、`CapturePreference`は`photoPreferred | videoFrame`のclosed unionとする。
+- version付きpayload `{ version: 1, idleTimeout, capturePreference }`だけを`src/platform/preferences.ts`から`localStorage`へ保存する。画像、Blob、dimensions、Object URL、device情報をportの型へ含めない。
+- missing、invalid、追加field、future version、JSON parse failure、SecurityError、quota errorは`10s / photoPreferred`へfallbackし、camera起動を妨げない。
+- unsupported cameraではruntimeのeffective routeとsettings表示を`videoFrame`にするが、stored `photoPreferred`は暗黙に書き換えない。
+- timeout変更時はactive timerをcancelして新しい値でrearmする。`off`は稼働中cameraを停止せず、automatic idle stopだけを無効にする。
+- browser tabとinstalled PWAは同一originのWeb Storageを共有し得る。撮影履歴は従来どおりreloadで消える。
 
 ## 5. Layout and visual design
 
@@ -854,7 +866,8 @@ v1は次をすべて満たした時点で完成とする。
 - [ ] 全履歴がreloadまでmemory上に残り、reload後は空になる。
 - [ ] 個別削除と全消去で対応Object URLがrevokeされる。
 - [ ] camera frameをnetwork、persistent storage、downloadへ書き込まない。
-- [ ] hidden時にcamera trackをdisableし、document破棄時にstopする。
+- [ ] hidden時とidle timeout時にcamera trackをstopし、明示操作で再開する。
+- [ ] settingsのtimeoutと撮影方式がreload後に復元され、画像やdevice情報を永続化しない。
 - [ ] Safari / Chromium / Firefoxの対象versionでactual image pasteを確認する。
 - [ ] keyboard、VoiceOver、reduced motion、200% zoomのtestを通す。
 - [ ] production `index.html`でmeta CSPとreferrer policyが有効であり、inline script / inline styleを含まない。

@@ -9,13 +9,14 @@ Camera Clipboard は、写真APIまたはカメラの現在フレームから一
 - ユーザー操作によるカメラ開始と live preview
 - shutter 一回で PNG を Clipboard へコピー
 - 対応cameraではnative写真APIを優先し、失敗時は最大解像度のvideo frameへfallback
-- 「写真優先」（default）と「動画フレーム」をsession内で選択可能
+- settingsから「写真優先」（default）と「動画フレーム」を選択し、次回起動用に保存
 - 履歴detailsで実際の撮影経路、native MIME、端末内のstage別処理時間を確認可能
 - video-frame captureのframe取得、raster準備、PNG encodeを独立して計測可能
 - 対応browserではvideo frameもtransferable bitmapとしてpersistent Workerへ渡し、`OffscreenCanvas`でPNG化
 - コピーに失敗しても残る in-memory 履歴と再コピー
 - カメラ一覧からの選択と quick swap
 - 10秒間操作がない場合の全画面screensaverとresume専用の最初の操作
+- camera自動停止を10秒〜10分またはoffから選択し、次回起動用に保存
 - background移行時のcamera track hard stopと明示的な再開
 - 個別削除、確認付き全消去、Object URL の即時 revoke
 - mobile bottom sheet / desktop side panel の responsive UI
@@ -41,16 +42,20 @@ Production URLをHTTPSで開き、browser / OSの標準UIからinstallできま�
 
 install後はstandalone windowで起動します。camera permissionとClipboardの扱い、reloadで履歴が消えるprivacy contractはbrowser tabで使う場合と同じです。Service Workerとoffline cacheは導入していないため、初回起動や再読込みにはnetwork接続が必要です。
 
+同じoriginのbrowser tabとinstalled PWAは、撮影方式とcamera自動停止時間の設定を共有する場合があります。保存するのはこの2設定とschema versionだけで、画像やcamera device情報は含みません。
+
 ## Privacy contract
 
 アプリケーションコードは撮影画像を次の場所へ書き込みません。
 
 - application server または third-party server
-- `localStorage`、IndexedDB、Cache Storage、OPFS
+- browser persistent storage（`localStorage`、IndexedDB、Cache Storage、OPFS）
 - filesystem、download folder、写真ライブラリ
 - analytics、telemetry、remote error reporter、console log
 
 許可する保持先は、現在の document に属するメモリと、ユーザー操作で書き込む system Clipboard だけです。再読み込み後に履歴を復元しません。OS の Clipboard 履歴、device 間 Clipboard 同期、swap、crash dump は OS/browser 側の責任範囲です。
+
+非画像preference `{ version, idleTimeout, capturePreference }`だけは`localStorage`へ保存します。Web Storageへのアクセスは`src/platform/preferences.ts`に限定し、invalid・future version・storage errorは安全なdefaultへ戻します。
 
 カメラ要求では常に `audio: false` を指定し、microphone permission を要求しません。
 

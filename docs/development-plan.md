@@ -22,7 +22,7 @@
 |   3.6 | Video-frame measurement and Worker optimization                 | 完了 (`9706e83`) |
 |     4 | Idle timeout core + hard camera suspend                         | 完了 (`b228df4`) |
 |     5 | Screensaver + interaction-based resume                          | 完了 (`b801ff5`) |
-|     6 | Preferences (idle timeout + capture mode)                       | 未着手           |
+|     6 | Preferences (idle timeout + capture mode)                       | 完了 (`58232b4`) |
 |     7 | Acceptance automation + high-resolution memory hardening        | 未着手           |
 |     8 | Documentation + release hardening                               | 未着手           |
 
@@ -617,9 +617,12 @@ source全体の`localStorage`文字列禁止を、次のarchitecture contractへ
 - preference変更でtimerが正しく再arm / cancelされる。
 - image `Blob`がpersistent preferenceへ到達するAPI surfaceを持たない。
 
-### Commit
+### 完了commits
 
-`feat: complete phase 6 idle preferences`
+```text
+95516a3 feat: add typed preference storage boundary
+58232b4 feat: add persistent camera settings UI
+```
 
 ## 9. Phase 7: Acceptance automation + memory hardening
 

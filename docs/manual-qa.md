@@ -76,8 +76,19 @@
 - [ ] reload 後に history が空になる（OS Clipboard に画像が残る場合は正常）。
 - [ ] DevTools Network を capture 前に clear し、capture/re-copy/delete 後に request が発生しない。
 - [ ] Application/Storage inspection で画像 data、Service Worker、Cache Storage が存在しない。
+- [ ] `localStorage`には`camera-clipboard.preferences`だけが存在し、payloadが`version`、`idleTimeout`、`capturePreference`だけである。
 - [ ] tab を background にすると camera indicator が停止または suspend 状態になり、復帰できる。
 - [ ] tab close/page navigation 後に camera indicator が消える。
+
+## Settings
+
+- [ ] camera画面の「設定を開く」からtop-layer modalを開き、Escapeとclose buttonで閉じられる。
+- [ ] 自動停止の`10秒`、`30秒`、`1分`、`3分`、`5分`、`10分`、`自動停止しない`をすべて選択できる。
+- [ ] `自動停止しない`ではcameraをその場で停止せず、10分以上操作しなくてもidle停止しない。
+- [ ] timeout変更後は新しい時間でtimerが再開し、設定modalを開いたままtimeoutした場合もmodalが閉じてscreensaverが全面に出る。
+- [ ] 撮影方式と自動停止時間がreload後とinstalled PWAで復元される。同じoriginのtabとPWAで共有され得ることを確認する。
+- [ ] 写真API非対応cameraではeffective表示が動画フレームでも、保存済みの写真優先設定が暗黙に書き換わらない。
+- [ ] Web Storage拒否またはquota errorを再現してもcamera開始と撮影が動作する。
 
 ## Accessibility と layout
 
