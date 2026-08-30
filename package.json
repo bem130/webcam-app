@@ -21,7 +21,8 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "test:e2e": "npm run verify:e2e",
-    "verify:source": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build",
+    "verify:repository": "node scripts/verify-repository.mjs",
+    "verify:source": "npm run verify:repository && npm run format:check && npm run lint && npm run typecheck && npm test && npm run build",
     "verify:e2e": "playwright test",
     "verify": "npm run verify:source && npm run verify:e2e"
   },

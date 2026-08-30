@@ -38,6 +38,7 @@ describe("deployment contract", () => {
     };
 
     expect(packageJson.scripts.verify).toBe("npm run verify:source && npm run verify:e2e");
+    expect(packageJson.scripts["verify:source"]).toContain("npm run verify:repository");
     expect(workflow).toContain("run: npm run verify:source");
     expect(workflow).toContain("run: npm run verify:e2e");
   });
