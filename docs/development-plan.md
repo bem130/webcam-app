@@ -23,7 +23,7 @@
 |     4 | Idle timeout core + hard camera suspend                         | 完了 (`b228df4`) |
 |     5 | Screensaver + interaction-based resume                          | 完了 (`b801ff5`) |
 |     6 | Preferences (idle timeout + capture mode)                       | 完了 (`93edea5`) |
-|     7 | Acceptance automation + high-resolution memory hardening        | 完了 (`fa767ab`) |
+|     7 | Acceptance automation + high-resolution memory hardening        | 完了 (`a8b3e6e`) |
 |     8 | Documentation + release hardening                               | 未着手           |
 
 各phaseは単独でbuild・test・deploy可能な状態で完了させる。複数phaseを一つのcommitへまとめず、phaseごとに実装、検証、diff review、commit、pushを行う。Phase 3の`ImageCapture`が利用できない環境でも、Phase 2のvideo-frame captureだけで完全に利用可能な状態を保つ。Phase 3.5と3.6は実機で顕在化したcapture / Clipboard latencyをPhase 4より先に扱い、Phase 4以降のidle lifecycleへ重い画像処理を持ち越さない。
@@ -666,10 +666,10 @@ ac670ff feat: add typed preference storage boundary
 ### 完了commits
 
 ```text
-7b3fbba fix: harden high-resolution canvas cleanup
-dd4463c fix: avoid retrying memory allocation failures
-a7cb912 test: expand V2 browser acceptance coverage
-fa767ab test: cover capture idle inhibition in browser
+99d6bf8 fix: harden high-resolution canvas cleanup
+ed2d4e6 fix: avoid retrying memory allocation failures
+8072ff0 test: expand V2 browser acceptance coverage
+a8b3e6e test: cover capture idle inhibition in browser
 ```
 
 ### Commit
