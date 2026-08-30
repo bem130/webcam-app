@@ -2,8 +2,8 @@
 
 | 項目 | 内容 |
 | --- | --- |
-| 文書状態 | V2 Phase 8 automated release hardeningまでの実装設計 |
-| Version | 0.8.0 |
+| 文書状態 | V2実装完了 |
+| Version | 0.8.1 |
 | 作成日 | 2026-08-30 |
 | 仮称 | Camera Clipboard |
 | 対象 | mobile / tablet / desktop のmodern browser |
@@ -768,7 +768,7 @@ UA文字列やbrowser名で機能を決めず、capability detectionを使う。
 
 `ClipboardItem.supports("image/png")`が存在する場合は事前検査に使う。存在しない場合は実際のwrite結果をtyped errorへ変換する。`devicechange`、`backdrop-filter`、`ImageBitmap`はoptional enhancementとする。
 
-releaseごとに次のcurrent stable browserで実機確認する。
+次のcurrent stable browserを互換性QA候補とする。全環境をreleaseごとの必須gateにはせず、新しい正式support環境を加える場合、環境固有の変更がある場合、またはproduct ownerが必要と判断した場合に対象を選んで実機確認する。
 
 - Safari on iOS / iPadOS
 - Safari on macOS
@@ -863,7 +863,7 @@ Worker経路では`createImageBitmap(video)`のsettlementを`videoFrameAcquire`�
 
 ## 18. Acceptance criteria
 
-V2は次をすべて満たした時点で完成とする。
+V2の機能acceptance項目を次に示す。自動gateで検証できないbrowser / OS / assistive technology項目はmanual QA候補であり、releaseごとの必須範囲はproduct ownerのrisk acceptanceで決定する。
 
 - [ ] 初期画面からuser actionでcameraを開始できる。
 - [ ] microphone permissionを要求しない。
@@ -886,7 +886,7 @@ V2は次をすべて満たした時点で完成とする。
 - [ ] pull requestではdeployせず、`main`のverified buildだけをPagesへdeployする。
 - [ ] GitHub Pagesでは設定不能なsecurity headerとmeta CSPの保証範囲が文書化されている。
 
-2026-08-30のclean installによる自動release verificationでは、27 test file / 142 unit・integration test、Playwright 60 case（34 pass / 26 capability skip）、production build、repository hygieneを完了した。initial JavaScriptはgzip 22.50 kBでNFR-01を満たし、production URLのHTML、Manifest、icon、base path、meta CSP、`connect-src 'none'`をHTTPで確認した。PWAの実install、実camera / Clipboard、Safari / Firefox fallback、VoiceOverはbrowser / OS / device依存のためmanual QAが完了条件として残る。
+2026-08-30のclean installによる自動release verificationでは、27 test file / 142 unit・integration test、Playwright 60 case（34 pass / 26 capability skip）、production build、repository hygieneを完了した。initial JavaScriptはgzip 22.50 kBでNFR-01を満たし、production URLのHTML、Manifest、icon、base path、meta CSP、`connect-src 'none'`をHTTPで確認した。product ownerは一部の利用環境で実動作を確認済みであり、現時点では他端末の追加確認をrelease blockerにしないと判断した。PWAの実install、実camera / Clipboard、Safari / Firefox fallback、VoiceOverの未確認範囲は、必要時に実施できるmanual QA checklistとして維持する。
 
 ## 19. Implementation plan
 

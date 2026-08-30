@@ -1,6 +1,10 @@
 # Release manual QA
 
-自動テストでは OS Clipboard、実カメラ、browser permission UI、VoiceOver の end-to-end 動作を完全には検証できない。release candidate を production 相当の HTTPS URL へ配信し、以下を記録する。
+自動テストでは OS Clipboard、実カメラ、browser permission UI、VoiceOver の end-to-end 動作を完全には検証できない。本書は、新しい正式support環境を加える場合、環境固有のregressionを調査する場合、またはproduct ownerが必要と判断した場合に使うrisk-based checklistである。全項目を毎releaseの必須gateとはしない。
+
+## 現releaseの受入判断
+
+2026-08-30、product ownerは一部の利用環境で実動作を確認し、現時点では他端末での追加確認を不要と判断した。以下の未チェック項目は不具合や未実装を意味せず、未確認環境の互換性を保証しない範囲を明示したoptional QA項目として維持する。
 
 ## 対象環境
 
@@ -115,4 +119,4 @@
 
 clean `npm ci`は209 package / 0 vulnerability、`npm run verify`は27 test file / 142 unit・integration testとPlaywright 60 case（34 pass / 26 capability skip）を完了した。production buildはinitial JavaScript 68.09 kB（gzip 22.50 kB）、Worker 3.32 kB、CSS 13.27 kB（gzip 3.65 kB）、`index.html` 1.19 kBだった。
 
-production URL、Manifest、192 / 512 / maskable iconはHTTP 200で、Manifestの`id` / `start_url` / `scope`は`/webcam-app/`、`display`は`standalone`だった。HTMLのbase path、meta CSP、`connect-src 'none'`も確認した。検証環境には接続済みbrowserがなかったため、rendered production UI、PWA install、実camera / Clipboard、Safari / Firefox fallback、VoiceOverは未実施であり、上記checklistを完了扱いにしていない。
+production URL、Manifest、192 / 512 / maskable iconはHTTP 200で、Manifestの`id` / `start_url` / `scope`は`/webcam-app/`、`display`は`standalone`だった。HTMLのbase path、meta CSP、`connect-src 'none'`も確認した。自動検証環境には接続済みbrowserがなかったため、rendered production UI、PWA install、実camera / Clipboard、Safari / Firefox fallback、VoiceOverは未実施である。これらは上記の受入判断により現releaseのblockerにはしない。

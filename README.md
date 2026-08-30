@@ -79,7 +79,7 @@ npm.cmd run verify
 
 `verify` は repository hygiene、format、lint、strict TypeScript、unit/integration test、production build、全browser E2Eをすべて実行します。repository gateはtracked fileのUTF-8、license / package metadata、lockfile、secretらしい内容、危険なfilename、1 MiBを超えるfileを検査します。短いfeedback loopには`npm.cmd run verify:source`、browserだけには`npm.cmd run verify:e2e`を使えます。E2E は初期 permission UX、axe による WCAG A/AA 検査、4 viewport、keyboard / focus、reduced motion、forced colors、Chromium fake cameraによるcapture / copy / history / idle inhibition / no-network / no-storage / reloadと、mockではないClipboard PNG write / read-backを確認します。
 
-実機の camera/Clipboard/assistive technology は browser automation だけでは保証できません。release 前に [手動 QA](docs/manual-qa.md) を対象端末で実施してください。
+実機の camera/Clipboard/assistive technology は browser automation だけでは保証できません。[手動 QA](docs/manual-qa.md) は新しい対象環境を正式supportへ加える場合、または環境固有のregressionを調査する場合に利用します。
 
 ## Production build と配信
 

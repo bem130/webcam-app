@@ -2,8 +2,8 @@
 
 | 項目           | 内容                                   |
 | -------------- | -------------------------------------- |
-| 文書状態       | V2実装計画・Phase 8実機QA待ち          |
-| Version        | 2.2                                    |
+| 文書状態       | V2実装完了                             |
+| Version        | 2.3                                    |
 | 更新日         | 2026-08-30                             |
 | 対象branch     | `main`                                 |
 | Production URL | `https://bem130.github.io/webcam-app/` |
@@ -12,19 +12,19 @@
 
 現在のcamera / Clipboard / in-memory historyとprivacy contractを維持しながら、次の順序でV2を実装する。
 
-| Phase | 内容                                                            | 状態                     |
-| ----: | --------------------------------------------------------------- | ------------------------ |
-|     1 | PWA installation                                                | 完了 (`4d2ef2b`)         |
-|     2 | Full-resolution video-frame capture + resolution display        | 完了 (`14339ac`)         |
-|   2.5 | Architecture and repository verification gates                  | 完了 (`ac16b78`)         |
-|     3 | Native still capture via `ImageCapture` progressive enhancement | 完了 (`8b0a83a`)         |
-|   3.5 | Capture pipeline measurement and worker optimization            | 完了 (`a163a8d`)         |
-|   3.6 | Video-frame measurement and Worker optimization                 | 完了 (`9706e83`)         |
-|     4 | Idle timeout core + hard camera suspend                         | 完了 (`b228df4`)         |
-|     5 | Screensaver + interaction-based resume                          | 完了 (`b801ff5`)         |
-|     6 | Preferences (idle timeout + capture mode)                       | 完了 (`93edea5`)         |
-|     7 | Acceptance automation + high-resolution memory hardening        | 完了 (`a8b3e6e`)         |
-|     8 | Documentation + release hardening                               | 自動検証完了・実機QA待ち |
+| Phase | 内容                                                            | 状態             |
+| ----: | --------------------------------------------------------------- | ---------------- |
+|     1 | PWA installation                                                | 完了 (`4d2ef2b`) |
+|     2 | Full-resolution video-frame capture + resolution display        | 完了 (`14339ac`) |
+|   2.5 | Architecture and repository verification gates                  | 完了 (`ac16b78`) |
+|     3 | Native still capture via `ImageCapture` progressive enhancement | 完了 (`8b0a83a`) |
+|   3.5 | Capture pipeline measurement and worker optimization            | 完了 (`a163a8d`) |
+|   3.6 | Video-frame measurement and Worker optimization                 | 完了 (`9706e83`) |
+|     4 | Idle timeout core + hard camera suspend                         | 完了 (`b228df4`) |
+|     5 | Screensaver + interaction-based resume                          | 完了 (`b801ff5`) |
+|     6 | Preferences (idle timeout + capture mode)                       | 完了 (`93edea5`) |
+|     7 | Acceptance automation + high-resolution memory hardening        | 完了 (`a8b3e6e`) |
+|     8 | Documentation + release hardening                               | 完了             |
 
 各phaseは単独でbuild・test・deploy可能な状態で完了させる。複数phaseを一つのcommitへまとめず、phaseごとに実装、検証、diff review、commit、pushを行う。Phase 3の`ImageCapture`が利用できない環境でも、Phase 2のvideo-frame captureだけで完全に利用可能な状態を保つ。Phase 3.5と3.6は実機で顕在化したcapture / Clipboard latencyをPhase 4より先に扱い、Phase 4以降のidle lifecycleへ重い画像処理を持ち越さない。
 
@@ -133,7 +133,7 @@ UIでは実測値とcapabilityを混同しない。
 
 `4d2ef2b feat: add phase 1 PWA installation support`
 
-Production端末での実installはPhase 8のmanual QAで最終確認する。
+Production端末での実installは、product ownerがrelease対象として指定した環境で必要に応じてmanual QAする。
 
 ## 4. Phase 2: Full-resolution video-frame capture + resolution display
 
@@ -685,12 +685,12 @@ a8b3e6e test: cover capture idle inhibition in browser
 - idle timeout、hard stop、screensaver resume、preference storage、installed PWAでの挙動を文書化する。
 - clean installからformat、lint、typecheck、unit / integration、production build、全browser E2Eを実行する。
 - production artifactについてmanifest、icon、CSP、base path、bundle size、secret、大容量fileを確認する。
-- GitHub Actions成功後、production URLでPWA install、camera indicator消灯、idle resume、解像度表示、actual image pasteを対象実機で確認する。
+- GitHub Actions成功後、production URLでPWA install、camera indicator消灯、idle resume、解像度表示、actual image pasteをproduct ownerが指定した環境で確認する。
 
 ### 完了条件
 
-- CI/CDとproduction smoke testが成功し、未実施の実機項目が結果とともに明記される。
-- Chromium / Androidの`ImageCapture` routeと、Safari / Firefoxのvideo-frame fallbackを対象実機で確認する。
+- CI/CDとproduction smoke testが成功し、未実施の実機項目が既知の未検証範囲として明記される。
+- product ownerが現時点の利用環境における実動作を受け入れ、追加端末の確認をrelease blockerにしないことを判断する。
 - worktreeがcleanで、local `HEAD`と`origin/main`が一致する。
 
 ### 自動release verification（2026-08-30）
@@ -700,9 +700,10 @@ a8b3e6e test: cover capture idle inhibition in browser
 - production artifactはinitial JavaScript 68.09 kB（gzip 22.50 kB）、Worker 3.32 kB、CSS 13.27 kB（gzip 3.65 kB）、`index.html` 1.19 kBだった。
 - repository gateはtracked textのUTF-8、MIT license、package metadata / lockfile、secret pattern、危険なfilename、1 MiB超のtracked fileを検査する。最大tracked fileは約122 kBだった。
 - production URLはHTTP 200で、Manifestは`id` / `start_url` / `scope`が`/webcam-app/`、`display`が`standalone`、192 / 512 / maskable iconが同一base pathでHTTP 200だった。HTMLのmeta CSP、`connect-src 'none'`、Manifest linkも確認した。
-- 接続済みbrowserのない検証環境ではrendered production UIを追加確認できなかった。実install、実camera indicator、idle resume、actual paste、Androidのnative still、Safari / Firefox fallback、VoiceOverは上記完了条件を満たすためのmanual QAとして未実施のまま明示する。
+- 接続済みbrowserのない自動検証環境ではrendered production UIを追加確認できなかった。実install、実camera indicator、idle resume、actual paste、Androidのnative still、Safari / Firefox fallback、VoiceOverは未検証範囲としてmanual QA checklistに残す。
+- product ownerは一部の利用環境で実動作を確認済みであり、2026-08-30時点では追加端末の確認を不要と判断した。未確認環境の互換性を保証したという意味ではなく、現releaseの受入範囲を明示的に限定する判断である。
 
-自動release hardeningは`build: gate repository release hygiene`と本節の文書同期へ分割した。Phase 8全体を完了にするのは対象実機のmanual QA後とする。
+自動release hardeningは`build: gate repository release hygiene`と本節の文書同期へ分割した。上記のrisk acceptanceを含め、Phase 8とV2開発を完了とする。
 
 ### Commit
 
