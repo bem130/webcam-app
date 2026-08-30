@@ -197,7 +197,7 @@ export class WorkerImageProcessingPort implements ImageProcessingPort {
     try {
       return await this.#prepareWithWorker(image, needsClipboardPng);
     } catch (cause) {
-      if (this.#disposed) throw cause;
+      if (this.#disposed || isMemoryAllocationFailure(cause)) throw cause;
       return this.#fallback.prepare(image, needsClipboardPng);
     }
   }
@@ -221,7 +221,7 @@ export class WorkerImageProcessingPort implements ImageProcessingPort {
       return await result;
     } catch (cause) {
       bitmap?.close();
-      if (this.#disposed) throw cause;
+      if (this.#disposed || isMemoryAllocationFailure(cause)) throw cause;
       return fallback();
     }
   }
@@ -316,7 +316,7 @@ export class WorkerImageProcessingPort implements ImageProcessingPort {
         job.prepared.resolve({
           dimensions,
           clipboardPng: workerClipboardPng.catch(async (cause: unknown) => {
-            if (this.#disposed) throw cause;
+            if (this.#disposed || isMemoryAllocationFailure(cause)) throw cause;
             const recovered = await fallback.get();
             return recovered.clipboardPng;
           }),
@@ -332,7 +332,7 @@ export class WorkerImageProcessingPort implements ImageProcessingPort {
             }
             return job.thumbnail.promise
               .catch(async (cause: unknown) => {
-                if (this.#disposed) throw cause;
+                if (this.#disposed || isMemoryAllocationFailure(cause)) throw cause;
                 const recovered = await fallback.get();
                 return recovered.encodeThumbnail();
               })
@@ -501,6 +501,13 @@ export function browserImageProcessingPort(
 
 export function isImageProcessingFailure(cause: unknown): cause is ImageProcessingFailure {
   return cause instanceof ImageProcessingFailure;
+}
+
+function isMemoryAllocationFailure(cause: unknown): boolean {
+  return (
+    (isImageProcessingFailure(cause) && cause.error.tag === "memoryAllocationFailed") ||
+    causeName(cause) === "QuotaExceededError"
+  );
 }
 
 function checkedDimensions(width: number, height: number): Dimensions {

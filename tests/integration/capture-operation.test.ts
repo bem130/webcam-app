@@ -124,6 +124,28 @@ describe("capture operation", () => {
     expect(encoder.encodeThumbnail).not.toHaveBeenCalled();
   });
 
+  it("settles the camera source and preserves existing state after transient allocation failure", async () => {
+    const encoder = fakeEncoder({
+      video: Promise.reject(new DOMException("", "QuotaExceededError")),
+    });
+    const operation = beginCaptureAndCopy(video, {
+      encoder,
+      clipboardPort: successfulClipboard(),
+      preference: "videoFrame",
+    });
+
+    await expect(operation.cameraSourceSettled).resolves.toBeUndefined();
+    await expect(operation.captured).resolves.toEqual({
+      tag: "err",
+      error: { tag: "memoryAllocationFailed" },
+    });
+    await expect(operation.thumbnail).resolves.toEqual({
+      tag: "err",
+      error: { tag: "memoryAllocationFailed" },
+    });
+    expect(encoder.encodeThumbnail).not.toHaveBeenCalled();
+  });
+
   it("keeps a native still artifact without full-size history re-encoding", async () => {
     const photo = imageBlob("photo", "image/jpeg");
     const clipboardPng = imageBlob("clipboard", "image/png");
